@@ -219,7 +219,7 @@ local function send_and_receive_ts_ping6(sock, reflector, sock_timestamp)
     end
 
     local uplink_time = receiveTS - originalTS
-    local downlink_time = originalTS + rtt - transmitTS
+    local downlink_time = time_after_midnight_ms - transmitTS
 
     local new_query_count = OWD_cur[reflector]['query_count'] + 1
     OWD_cur[reflector] = {['uplink_time'] = uplink_time, ['downlink_time'] = downlink_time, ['query_count'] = new_query_count}
