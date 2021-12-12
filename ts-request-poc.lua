@@ -1,8 +1,8 @@
 local bit = require 'bit32'
 local math = require 'math'
-local posix = require 'posix'
 local socket = require 'posix.sys.socket'
 local time = require 'posix.time'
+local unistd = require 'posix.unistd'
 local vstruct = require 'vstruct'
 
 ---------------------------- Begin Local Variables ----------------------------
@@ -17,7 +17,12 @@ local base_dl_rate = 462500 -- steady state bandwidth for download
 
 local tick_duration = 0.5 -- seconds to wait between ticks
 
+--local cur_process_id = unistd.getpid()
+local cur_process_id = 100
+
 local reflectorArrayV4 = {'9.9.9.9', '9.9.9.10', '149.112.112.10', '149.112.112.11', '149.112.112.112'}
+local reflectors = {}
+
 local reflectorArrayV6 = {'2620:fe::10', '2620:fe::fe:10'} -- TODO Implement IPv6 support?
 
 local alpha_OWD_increase = 0.001 -- how rapidly baseline OWD is allowed to increase
@@ -37,8 +42,6 @@ local OWD_avg = {}
 
 local sender_coroutine_array = {}
 local receiver_coroutine_array = {}
-
-local cur_process_id = posix.getpid()
 
 -- Open raw socket
 local sock, err = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
@@ -103,28 +106,37 @@ local function update_tc_rates()
     print("TBD")
 end
 
-local function receive_ts_ping(reflector, packet_id)
+local function receive_ts_ping()
     -- Read ICMP TS reply
     local id
     local tsResp
     local source_addr
     local time_after_midnight_ms
-    repeat
-        local data, sa = socket.recvfrom(sock, 1024)
-        assert(data, sa)
 
-        local ipStart = string.byte(data, 1)
-        local ipVer = bit.rshift(ipStart, 4)
-        local hdrLen = (ipStart - ipVer * 16) * 4
+    local data, sa = socket.recvfrom(sock, 1024)
+    local reflector = sa.addr
+    assert(data, sa)
 
-        tsResp = vstruct.read('> 2*u1 3*u2 3*u4', string.sub(data, hdrLen + 1, #data))
-        time_after_midnight_ms = get_time_after_midnight_ms()
+    local ipStart = string.byte(data, 1)
+    local ipVer = bit.rshift(ipStart, 4)
+    local hdrLen = (ipStart - ipVer * 16) * 4
 
-        source_addr = sa
-        id = decToHex(tsResp[4], 4)
-        print(id)
-        print("Looking for",packet_id)
-    until id == packet_id
+    tsResp = vstruct.read('> 2*u1 3*u2 3*u4', string.sub(data, hdrLen + 1, #data))
+
+    local icmpType = tsResp[1]
+    local identifier = tsResp[4]
+
+    if icmpType ~= 14 then
+        -- Not a ICMP timestamp response, move on
+        return
+    end
+
+    local idForAddr = reflectors[reflector].id
+    if idForAddr ~= identifier then
+        return
+    end
+
+    time_after_midnight_ms = get_time_after_midnight_ms()
 
     local originalTS = tsResp[6]
     local receiveTS = tsResp[7]
@@ -150,7 +162,7 @@ local function receive_ts_ping(reflector, packet_id)
     if debug then
         print('Reflector IP: '..reflector..'  |  Current time: '..time_after_midnight_ms..
             '  |  TX at: '..originalTS..'  |  RTT: '..rtt..'  |  UL time: '..uplink_time..
-            '  |  DL time: '..downlink_time..'  |  Source IP: '..source_addr.addr)
+            '  |  DL time: '..downlink_time)
     end
 end
 
@@ -169,7 +181,6 @@ local function send_ts_ping(reflector, packet_id)
     local time_after_midnight_ms = get_time_after_midnight_ms()
     local tsReq = vstruct.write('> 2*u1 3*u2 3*u4', {13, 0, 0, packet_id, 0, time_after_midnight_ms, 0, 0})
     local tsReq = vstruct.write('> 2*u1 3*u2 3*u4', {13, 0, calculate_checksum(tsReq), packet_id, 0, time_after_midnight_ms, 0, 0})
-
     -- Send ICMP TS request
     local ok, err = socket.sendto(sock, tsReq, {family=socket.AF_INET, addr=reflector, port=0})
     assert(ok, err)
@@ -239,31 +250,33 @@ end
 ---------------------------- Begin Coroutine Setup ----------------------------
 -- Set up the OWD constructs
 for i,reflector in ipairs(reflectorArrayV4) do
+    local id = cur_process_id + i
+    reflectors[reflector] = {id = id}
+
+    print (reflector..' -> '..id)
+
     OWD_cur[reflector] = {['uplink_time'] = -1, ['downlink_time'] = -1, ['query_count'] = 0}
     OWD_avg[reflector] = {['uplink_time_avg'] = {}, ['downlink_time_avg'] = {}}
 
-    local pkt_id = decToHex(cur_process_id + i, 4)
+    reflectorArrayV4[i] = id
 
     sender_cr = coroutine.create(function ()
         local r_ip = reflector
 
         while true do
-            send_ts_ping(r_ip, pkt_id)
+            send_ts_ping(r_ip, id)
             coroutine.yield()
         end
     end)
     table.insert(sender_coroutine_array, sender_cr)
-
-    receiver_cr = coroutine.create(function()
-        local r_ip = reflector
-
-        while true do
-            receive_ts_ping(r_ip, pkt_id)
-            coroutine.yield()
-        end
-    end)
-    table.insert(receiver_coroutine_array, receiver_cr)
 end
+
+local receiver_cr = coroutine.create(function()
+    while true do
+        receive_ts_ping()
+        coroutine.yield()
+    end
+end )
 
 ---- DISABLED for now until some ICMPv6 stuff is figured out...
 -- for _,reflector in ipairs(reflectorArrayV6) do
@@ -296,9 +309,7 @@ while true do
         coroutine.resume(sender)
     end
 
-    for _,receiver in ipairs(receiver_coroutine_array) do
-        coroutine.resume(receiver)
-    end
+    coroutine.resume(receiver_cr)
 
     -- Debug stuffz...
     -- if debug then
