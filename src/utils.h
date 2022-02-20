@@ -1,19 +1,6 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-#include <arpa/inet.h>
-#include <assert.h>
-#include <netinet/in.h>
-#include <netinet/ip_icmp.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <asm/socket.h>
-#include <sys/time.h>
-#include <time.h>
-#include <linux/net_tstamp.h>
 #include <linux/time_types.h>
 
 unsigned short calculateChecksum(void *b, int len);
@@ -31,4 +18,4 @@ void hexDump (
     int perLine
 );
 
-#endif
+#endif // UTILS_H

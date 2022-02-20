@@ -1,20 +1,7 @@
-#include <arpa/inet.h>
-#include <assert.h>
-#include <netinet/in.h>
-#include <netinet/ip_icmp.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <asm/socket.h>
-#include <sys/time.h>
-#include <time.h>
-#include <stdint.h>
-#include <linux/net_tstamp.h>
-#include <linux/time_types.h>
+#ifndef PINGER_ICMP_H
+#define PINGER_ICMP_H
 
-struct sockaddr_in;
+#include <stdint.h>
 
 struct icmp_timestamp_hdr
 {
@@ -31,3 +18,5 @@ struct icmp_timestamp_hdr
 int icmp_ping_send(int sock_fd, struct sockaddr_in *reflector, int seq);
 
 void *icmp_receiver_loop(int sock_fd);
+
+#endif // PINGER_ICMP_H

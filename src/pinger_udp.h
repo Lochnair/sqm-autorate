@@ -1,18 +1,7 @@
-#include <arpa/inet.h>
-#include <assert.h>
-#include <netinet/in.h>
-#include <netinet/ip_icmp.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <asm/socket.h>
-#include <sys/time.h>
-#include <time.h>
+#ifndef PINGER_UDP_H
+#define PINGER_UDP_H
+
 #include <stdint.h>
-#include <linux/net_tstamp.h>
-#include <linux/time_types.h>
 
 struct udp_timestamp_hdr
 {
@@ -28,3 +17,5 @@ struct udp_timestamp_hdr
 	uint32_t transmitTime;
 	uint32_t transmitTimeNs;
 };
+
+#endif // PINGER_UDP_H
