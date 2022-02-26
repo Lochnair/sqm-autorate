@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <asm/socket.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -11,7 +12,8 @@
 
 int sock_fd;
 
-static const char *const ips[] = {"65.21.108.153", "5.161.66.148", "185.243.217.26", "185.175.56.188", "176.126.70.119", "216.128.149.82", "108.61.220.16"};
+//static const char *const ips[] = {"65.21.108.153", "5.161.66.148", "185.243.217.26", "185.175.56.188", "176.126.70.119", "216.128.149.82", "108.61.220.16"};
+static const char *const ips[] = {"9.9.9.9", "9.9.9.10", "172.18.254.1", "208.67.222.220", "208.67.222.222"};
 struct sockaddr_in *reflectors;
 int reflectors_len = -1;
 
@@ -62,12 +64,19 @@ int main()
 	sock_fd = get_icmp_socket();
 
 	reflectors_len = sizeof(ips) / sizeof(ips[0]);
-	reflectors = malloc(sizeof(struct sockaddr_in) * reflectors_len);
+	reflectors = calloc(reflectors_len, sizeof(struct sockaddr_in));
 
 	for (int i = 0; i < reflectors_len; i++)
 	{
 		inet_pton(AF_INET, ips[i], &reflectors[i].sin_addr);
 		reflectors[i].sin_port = htons(62222);
+	}
+
+	for (int i = 0; i < reflectors_len; i++)
+	{
+		char ip[INET_ADDRSTRLEN];
+		inet_ntop(AF_INET, &reflectors[i].sin_addr, &ip, INET_ADDRSTRLEN);
+		printf("Reflector #%d: %s\n", i + 1, ip);
 	}
 
 	pthread_t receiver_thread;
