@@ -5,10 +5,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <linux/time_types.h>
 
+#include "baseliner.h"
 #include "pinger_icmp.h"
+
+#define __USE_UNIX98
+#include <pthread.h>
+#include "pthread_queue.h"
 #include "utils.h"
+
+#include "globals.h"
 
 int icmp_ping_send(int sock_fd, struct sockaddr_in *reflector, int seq)
 {
@@ -45,7 +53,7 @@ void *icmp_receiver_loop(int sock_fd)
 		struct icmp_timestamp_hdr * hdr;
 		struct sockaddr_in remote_addr;
 		socklen_t addr_len = sizeof(remote_addr);
-		struct __kernel_timespec rxTimestamp;
+		struct timespec current_time;
 		int recv = recvfrom(sock_fd, buff, 100, 0, (struct sockaddr *)&remote_addr, &addr_len);
 
 		if (recv < 0)
@@ -67,22 +75,33 @@ void *icmp_receiver_loop(int sock_fd)
 			continue;
 		}
 
-		//if (get_rx_timestamp(sock_fd, &rxTimestamp) == -1)
-		//{
-		//	printf("couldn't get rx ts, fallback to current time\n");
-			rxTimestamp = get_time();
-		//}
+		current_time = get_time();
+		unsigned long time_since_midnight_ms = (current_time.tv_sec % 86400 * 1000) + (current_time.tv_nsec / 1000000);
 
-		char ip[INET_ADDRSTRLEN];
-		inet_ntop(AF_INET, &(remote_addr.sin_addr), ip, INET_ADDRSTRLEN);
+		time_data_t time_data;
+		inet_ntop(AF_INET, &(remote_addr.sin_addr), &time_data.reflector, INET_ADDRSTRLEN);
 
-		unsigned long now_ts = (rxTimestamp.tv_sec % 86400 * 1000) + (rxTimestamp.tv_nsec / 1000000);
-		unsigned long rtt = now_ts - ntohl(hdr->originateTime);
-		unsigned long uplink_time = ntohl(hdr->receiveTime) - ntohl(hdr->originateTime);
-		unsigned long downlink_time = now_ts - ntohl(hdr->transmitTime);
+		pthread_rwlock_rdlock(&reflectors_lock);
+		reflector_t * reflector = NULL;
+		HASH_FIND_STR(reflectors, time_data.reflector, reflector);
+
+		if (!reflector) // if reflector not in hash table, ignore it
+			continue;
+
+		pthread_rwlock_unlock(&reflectors_lock);
+
+		time_data.originate_timestamp = ntohl(hdr->originateTime);
+		time_data.receive_timestamp = ntohl(hdr->receiveTime);
+		time_data.transmit_timestamp = ntohl(hdr->transmitTime);
+		time_data.rtt = time_since_midnight_ms - time_data.originate_timestamp;
+		time_data.downlink_time = time_since_midnight_ms - time_data.transmit_timestamp;
+		time_data.uplink_time = time_data.receive_timestamp - time_data.originate_timestamp;
+		time_data.last_receive_time_s = current_time.tv_sec + current_time.tv_nsec / 1e9;
 
 		printf("Type: %4s  |  Reflector IP: %15s  |  Seq: %5d  |  Current time: %8ld  |  Originate: %8ld  |  Received time: %8ld  |  Transmit time: %8ld  |  RTT: %5ld  |  UL time: %5ld  |  DL time: %5ld\n", 
-		"ICMP", ip, ntohs(hdr->sequence), now_ts, (unsigned long) ntohl(hdr->originateTime), (unsigned long) ntohl(hdr->receiveTime), (unsigned long) ntohl(hdr->transmitTime), rtt, uplink_time, downlink_time);
+		"ICMP", time_data.reflector, ntohs(hdr->sequence), time_since_midnight_ms, (unsigned long) time_data.originate_timestamp, (unsigned long) time_data.receive_timestamp, (unsigned long) time_data.transmit_timestamp, (unsigned long) time_data.rtt, (unsigned long) time_data.uplink_time, (unsigned long) time_data.downlink_time);
 		free(buff);
+
+		pthread_queue_sendmsg(baseliner_queue, &time_data, 100);
 	}
 }

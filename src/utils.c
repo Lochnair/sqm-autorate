@@ -1,5 +1,6 @@
 #include "utils.h"
 #include <asm/socket.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -21,17 +22,22 @@ unsigned short calculateChecksum(void *b, int len)
 	return result;
 }
 
-struct __kernel_timespec get_time()
+double ewma_factor(float tick, float dur)
 {
-	struct __kernel_timespec time;
-	clock_gettime(CLOCK_REALTIME, (struct timespec *) &time);
+    return exp(logf(0.5) / (dur / tick));
+}
+
+struct timespec get_time()
+{
+	struct timespec time;
+	clock_gettime(CLOCK_REALTIME, &time);
 	return time;
 }
 
 unsigned long get_time_since_midnight_ms()
 {
-    struct __kernel_timespec time;
-    clock_gettime(CLOCK_REALTIME, (struct timespec *) &time);
+    struct timespec time;
+    clock_gettime(CLOCK_REALTIME, &time);
 
     return (time.tv_sec % 86400 * 1000) + (time.tv_nsec / 1000000);
 }

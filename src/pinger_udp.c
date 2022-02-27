@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <linux/time_types.h>
+#include <time.h>
 
 #include "pinger_udp.h"
 #include "utils.h"
@@ -15,7 +15,7 @@ int udp_ping_send(int sock_fd, struct sockaddr_in *reflector, int seq)
 
 	memset(&hdr, 0, sizeof(hdr));
 
-	struct __kernel_timespec now = get_time();
+	struct timespec now = get_time();
 
 	hdr.type = ICMP_TIMESTAMP;
 	hdr.identifier = htons(0xFEED);

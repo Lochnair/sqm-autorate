@@ -1,21 +1,34 @@
 #include <arpa/inet.h>
 #include <asm/socket.h>
 #include <netinet/in.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 
-#include "pinger.h"
+#define __USE_UNIX98
+#include <pthread.h>
+#include "pthread_queue.h"
 
-#define _GNU_SOURCE
+#include "baseliner.h"
+#include "pinger.h"
+#include "reflectors.h"
 
 int sock_fd;
 
+pthread_queue_t * baseliner_queue;
+char * baseliner_queue_buffer;
+
+owd_data_t * owd_baseline, * owd_recent;
+pthread_rwlock_t owd_lock;
+
+const float tick_duration = 0.5;
+
 //static const char *const ips[] = {"65.21.108.153", "5.161.66.148", "185.243.217.26", "185.175.56.188", "176.126.70.119", "216.128.149.82", "108.61.220.16"};
 static const char *const ips[] = {"9.9.9.9", "9.9.9.10", "172.18.254.1", "208.67.222.220", "208.67.222.222"};
-struct sockaddr_in *reflectors;
-int reflectors_len = -1;
+//struct sockaddr_in *reflectors;
+
+reflector_t * reflectors = NULL;
+pthread_rwlock_t reflectors_lock;
 
 int get_icmp_socket()
 {
@@ -59,30 +72,59 @@ int get_udp_socket()
     return udp_sock_fd;
 }
 
+int init_reflectors()
+{
+	pthread_rwlock_wrlock(&reflectors_lock);
+	
+	int reflectors_len = sizeof(ips) / sizeof(ips[0]);
+
+	for (int i = 0; i < reflectors_len; i++)
+	{
+		reflector_t * new_reflector = calloc(1, sizeof(reflector_t));
+		new_reflector->addr = calloc(1, sizeof(struct sockaddr_in));
+
+		strcpy(&new_reflector->ip, ips[i]);
+		inet_pton(AF_INET, &new_reflector->ip, &new_reflector->addr->sin_addr);
+		new_reflector->addr->sin_port = htons(62222);
+		HASH_ADD_STR(reflectors, ip, new_reflector);
+	}
+
+	pthread_rwlock_unlock(&reflectors_lock);
+
+	return 0;
+}
+
 int main()
 {
+	if ((pthread_rwlock_init(&owd_lock, NULL)) != 0)
+	{
+		printf("can't create rwlock");
+		return 1;
+	}
+
+	if ((pthread_rwlock_init(&reflectors_lock, NULL)) != 0)
+	{
+		printf("can't create rwlock");
+		return 1;
+	}
+
+	init_reflectors();
+
 	sock_fd = get_icmp_socket();
 
-	reflectors_len = sizeof(ips) / sizeof(ips[0]);
-	reflectors = calloc(reflectors_len, sizeof(struct sockaddr_in));
+	baseliner_queue = calloc(sizeof(pthread_queue_t), 1);
+	baseliner_queue_buffer = calloc(sizeof(time_data_t), 32);
+	pthread_queue_create(&baseliner_queue, baseliner_queue_buffer, 32, sizeof(time_data_t));
 
-	for (int i = 0; i < reflectors_len; i++)
-	{
-		inet_pton(AF_INET, ips[i], &reflectors[i].sin_addr);
-		reflectors[i].sin_port = htons(62222);
-	}
-
-	for (int i = 0; i < reflectors_len; i++)
-	{
-		char ip[INET_ADDRSTRLEN];
-		inet_ntop(AF_INET, &reflectors[i].sin_addr, &ip, INET_ADDRSTRLEN);
-		printf("Reflector #%d: %s\n", i + 1, ip);
-	}
-
+	pthread_t baseliner_thread;
 	pthread_t receiver_thread;
 	pthread_t sender_thread;
 
 	int t;
+	if ((t = pthread_create(&baseliner_thread, NULL, baseliner_loop, NULL)) != 0)
+	{
+		printf("failed to create baseliner thread: %d\n", t);
+	}
 	if ((t = pthread_create(&receiver_thread, NULL, receiver_loop, NULL)) != 0)
 	{
 		printf("failed to create icmp receiver thread: %d\n", t);
@@ -93,11 +135,18 @@ int main()
 		printf("failed to create sender thread: %d\n", t);
 	}
 
+	pthread_setname_np(baseliner_thread, "baseliner");
 	pthread_setname_np(receiver_thread, "receiver");
 	pthread_setname_np(sender_thread, "sender");
 
+	void *baseliner_status;
 	void *receiver_status;
 	void *sender_status;
+
+	if ((t = pthread_join(baseliner_thread, &baseliner_status)) != 0)
+	{
+		printf("Error in baseliner thread join: %d\n", t);
+	}
 
 	if ((t = pthread_join(receiver_thread, &receiver_status)) != 0)
 	{

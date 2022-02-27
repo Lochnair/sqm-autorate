@@ -5,9 +5,11 @@
 
 unsigned short calculateChecksum(void *b, int len);
 
+double ewma_factor(float tick, float dur);
+
 int get_rx_timestamp(int sock_fd, struct __kernel_timespec * rx_timestamp);
 
-struct __kernel_timespec get_time();
+struct timespec get_time();
 
 unsigned long get_time_since_midnight_ms();
 
