@@ -2,6 +2,7 @@
 #include "utils.h"
 
 #include <arpa/inet.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -18,10 +19,8 @@ void add_reflector(char * reflector) {
 	baseline = calloc(1, sizeof(owd_data_t));
 	recent = calloc(1, sizeof(owd_data_t));
 
-	strcpy(&baseline->reflector, reflector);
-	strcpy(&recent->reflector, reflector);
-
-	baseline->down_ewma = 5;
+	strcpy((char * restrict) &baseline->reflector, reflector);
+	strcpy((char * restrict) &recent->reflector, reflector);
 
 	pthread_rwlock_wrlock(&owd_lock);
 	HASH_ADD_STR(owd_baseline, reflector, baseline);
@@ -38,9 +37,9 @@ void * baseliner_loop()
 	pthread_rwlock_rdlock(&reflectors_lock);
 	for (reflector = reflectors; reflector != NULL; reflector = reflector->hh.next) {
 		char ip[INET_ADDRSTRLEN];
-		inet_ntop(AF_INET, &reflector->addr->sin_addr, &ip, INET_ADDRSTRLEN);
+		inet_ntop(AF_INET, &reflector->addr->sin_addr, (char * restrict) &ip, INET_ADDRSTRLEN);
 		printf("adding %s\n", ip);
-		add_reflector(&ip);
+		add_reflector((char *) &ip);
 	}
 	pthread_rwlock_unlock(&reflectors_lock);
 
@@ -65,15 +64,62 @@ void * baseliner_loop()
 		HASH_FIND_STR(owd_baseline, time_data->reflector, baseline);
 		HASH_FIND_STR(owd_recent, time_data->reflector, recent);
 
-		if (baseline)
+		if (!baseline || !recent)
 		{
-			printf("refl: %s, down_ewma: %f\n", time_data->reflector, baseline->down_ewma);
+			pthread_rwlock_unlock(&owd_lock);
+			add_reflector((char * ) time_data->reflector);
+			pthread_rwlock_rdlock(&owd_lock);
 		}
-		
-		if (recent)
+
+		if (!baseline->down_ewma)
+			baseline->down_ewma = time_data->downlink_time;
+
+		if (!baseline->up_ewma)
+			baseline->up_ewma = time_data->uplink_time;
+
+		if (!baseline->last_receive_time_s)
+			baseline->last_receive_time_s = time_data->last_receive_time_s;
+
+		if (!recent->down_ewma)
+			recent->down_ewma = time_data->downlink_time;
+
+		if (!recent->up_ewma)
+			recent->up_ewma = time_data->uplink_time;
+
+		if (!recent->last_receive_time_s)
+			recent->last_receive_time_s = time_data->last_receive_time_s;
+
+		if (time_data->last_receive_time_s - baseline->last_receive_time_s > 30 || time_data->last_receive_time_s - recent->last_receive_time_s > 30)
 		{
-			printf("refl: %s, down_ewma: %f\n", time_data->reflector, recent->down_ewma);
+			/*
+			 * This reflector is out of date, it's probably newly chosen from the
+			 * choice cycle, reset all the ewmas to the current value
+			 */
+			baseline->down_ewma = time_data->downlink_time;
+			baseline->up_ewma = time_data->uplink_time;
+			recent->down_ewma = time_data->downlink_time;
+			recent->up_ewma = time_data->uplink_time;
 		}
+
+		// if this reflection is more than 5 seconds higher than baseline.. mark it no good and trigger a reselection
+		if (time_data->uplink_time > baseline->up_ewma + 5000 || time_data->downlink_time > baseline->down_ewma + 5000)
+		{
+			// TODO: Implement reflector selector
+		}
+		else
+		{
+			baseline->down_ewma = baseline->down_ewma * slow_factor  + (1 - slow_factor) * time_data->downlink_time;
+			baseline->up_ewma = baseline->up_ewma * slow_factor  + (1 - slow_factor) * time_data->uplink_time;
+			recent->down_ewma = recent->down_ewma * fast_factor + (1 - fast_factor) * time_data->downlink_time;
+			recent->up_ewma = recent->up_ewma * fast_factor + (1 - fast_factor) * time_data->uplink_time;
+
+			// when baseline is above the recent, set equal to recent, so we track more quickly
+			baseline->down_ewma = fmin(baseline->down_ewma, recent->down_ewma);
+			baseline->up_ewma = fmin(baseline->up_ewma, recent->up_ewma);
+		}
+
+		printf("Reflector %s up baseline = %f down baseline = %f\n", time_data->reflector, baseline->up_ewma, baseline->down_ewma);
+		printf("Reflector %s up recent = %f down recent = %f\n", time_data->reflector, recent->up_ewma, recent->down_ewma);
 
 		pthread_rwlock_unlock(&owd_lock);
 		free(time_data);
