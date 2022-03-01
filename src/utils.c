@@ -1,10 +1,18 @@
-#include "utils.h"
+#include <arpa/inet.h>
 #include <asm/socket.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <time.h>
+
+#define __USE_UNIX98
+#include <pthread.h>
+#include "pthread_queue.h"
+
+#include "globals.h"
+#include "reflectors.h"
+#include "utils.h"
 
 unsigned short calculateChecksum(void *b, int len)
 {
@@ -148,3 +156,54 @@ void hexDump (
     printf ("  %s\n", buff);
 }
 
+int add_reflector(char * ip)
+{
+    reflector_t * new_reflector = calloc(1, sizeof(reflector_t));
+    new_reflector->addr = calloc(1, sizeof(struct sockaddr_in));
+
+    strcpy((char *) &new_reflector->ip, ip);
+    inet_pton(AF_INET, (char *) &new_reflector->ip, &new_reflector->addr->sin_addr);
+    new_reflector->addr->sin_port = htons(62222);
+    HASH_ADD_STR(reflectors, ip, new_reflector);
+
+    return 0;
+}
+
+int load_reflector_list(char * path, reflector_t ** out)
+{
+    printf("hello?\n");
+    FILE * fp;
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+
+    fp = fopen(path, "r");
+    
+    if (fp == NULL)
+    {
+        printf("Could not open reflector file: %s\n", path);
+        return -1;
+    }
+
+    int i = 0;
+
+    pthread_rwlock_wrlock(&reflectors_lock);
+    while ((read = getline(&line, &len, fp)) != -1) {
+        // skip first line
+        if (i == 0) {
+            i++;
+            continue;
+        }
+
+        char * ip = strtok(line, ",");
+        add_reflector(ip);
+        i++;
+    }
+    pthread_rwlock_unlock(&reflectors_lock);
+
+    fclose(fp);
+    if (line)
+        free(line);
+
+    return 0;
+}

@@ -3,6 +3,8 @@
 
 #include <linux/time_types.h>
 
+#include "reflectors.h"
+
 unsigned short calculateChecksum(void *b, int len);
 
 double ewma_factor(float tick, float dur);
@@ -19,5 +21,7 @@ void hexDump (
     const int len,
     int perLine
 );
+
+int load_reflector_list(char * path, reflector_t ** out);
 
 #endif // UTILS_H

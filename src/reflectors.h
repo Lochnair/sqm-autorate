@@ -12,4 +12,6 @@ typedef struct reflector_s {
     UT_hash_handle hh;
 } reflector_t;
 
+void * reflector_peer_selector();
+
 #endif // REFLECTORS_H

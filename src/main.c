@@ -1,3 +1,6 @@
+#define _GNU_SOURCE
+#include <features.h>
+
 #include <arpa/inet.h>
 #include <asm/socket.h>
 #include <netinet/in.h>
@@ -5,18 +8,17 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 
-#define __USE_UNIX98
 #include <pthread.h>
 #include "pthread_queue.h"
 
 #include "baseliner.h"
 #include "pinger.h"
 #include "reflectors.h"
+#include "utils.h"
 
 int sock_fd;
 
 pthread_queue_t * baseliner_queue;
-char * baseliner_queue_buffer;
 
 owd_data_t * owd_baseline, * owd_recent;
 pthread_rwlock_t owd_lock;
@@ -29,6 +31,8 @@ static const char *const ips[] = {"9.9.9.9", "9.9.9.10", "172.18.254.1", "208.67
 
 reflector_t * reflectors = NULL;
 pthread_rwlock_t reflectors_lock;
+
+pthread_queue_t * reselector_channel;
 
 int get_icmp_socket()
 {
@@ -83,8 +87,8 @@ int init_reflectors()
 		reflector_t * new_reflector = calloc(1, sizeof(reflector_t));
 		new_reflector->addr = calloc(1, sizeof(struct sockaddr_in));
 
-		strcpy(&new_reflector->ip, ips[i]);
-		inet_pton(AF_INET, &new_reflector->ip, &new_reflector->addr->sin_addr);
+		strcpy((char *) &new_reflector->ip, ips[i]);
+		inet_pton(AF_INET, (char *) &new_reflector->ip, &new_reflector->addr->sin_addr);
 		new_reflector->addr->sin_port = htons(62222);
 		HASH_ADD_STR(reflectors, ip, new_reflector);
 	}
@@ -108,16 +112,16 @@ int main()
 		return 1;
 	}
 
-	init_reflectors();
+	load_reflector_list("./reflectors-icmp.csv", &reflectors);
 
 	sock_fd = get_icmp_socket();
 
-	baseliner_queue = calloc(sizeof(pthread_queue_t), 1);
-	baseliner_queue_buffer = calloc(sizeof(time_data_t), 32);
-	pthread_queue_create(&baseliner_queue, baseliner_queue_buffer, 32, sizeof(time_data_t));
+	pthread_queue_create(&baseliner_queue, NULL, 32, sizeof(time_data_t));
+	pthread_queue_create(&reselector_channel, NULL, 10, 1);
 
 	pthread_t baseliner_thread;
 	pthread_t receiver_thread;
+	pthread_t reselector_thread;
 	pthread_t sender_thread;
 
 	int t;
@@ -125,9 +129,15 @@ int main()
 	{
 		printf("failed to create baseliner thread: %d\n", t);
 	}
+
 	if ((t = pthread_create(&receiver_thread, NULL, receiver_loop, NULL)) != 0)
 	{
 		printf("failed to create icmp receiver thread: %d\n", t);
+	}
+
+	if ((t = pthread_create(&reselector_thread, NULL, reflector_peer_selector, NULL)) != 0)
+	{
+		printf("failed to create reselector thread: %d\n", t);
 	}
 
 	if ((t = pthread_create(&sender_thread, NULL, sender_loop, NULL)) != 0)
@@ -137,6 +147,7 @@ int main()
 
 	pthread_setname_np(baseliner_thread, "baseliner");
 	pthread_setname_np(receiver_thread, "receiver");
+	pthread_setname_np(reselector_thread, "reselector");
 	pthread_setname_np(sender_thread, "sender");
 
 	void *baseliner_status;

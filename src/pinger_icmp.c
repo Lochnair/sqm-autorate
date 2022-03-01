@@ -36,7 +36,7 @@ int icmp_ping_send(int sock_fd, struct sockaddr_in *reflector, int seq)
 	if ((t = sendto(sock_fd, &hdr, sizeof(hdr), 0, (const struct sockaddr *)reflector, sizeof(*reflector))) == -1)
 	{
 		char ip[INET_ADDRSTRLEN];
-		inet_ntop(AF_INET, &reflector->sin_addr, &ip, INET_ADDRSTRLEN);
+		inet_ntop(AF_INET, &reflector->sin_addr, (char *) &ip, INET_ADDRSTRLEN);
 
 		printf("something wrong for ip %s: %d\n", ip, t);
 		return 1;
@@ -79,7 +79,7 @@ void *icmp_receiver_loop(int sock_fd)
 		unsigned long time_since_midnight_ms = (current_time.tv_sec % 86400 * 1000) + (current_time.tv_nsec / 1000000);
 
 		time_data_t time_data;
-		inet_ntop(AF_INET, &(remote_addr.sin_addr), &time_data.reflector, INET_ADDRSTRLEN);
+		inet_ntop(AF_INET, &(remote_addr.sin_addr), (char *) &time_data.reflector, INET_ADDRSTRLEN);
 
 		pthread_rwlock_rdlock(&reflectors_lock);
 		reflector_t * reflector = NULL;

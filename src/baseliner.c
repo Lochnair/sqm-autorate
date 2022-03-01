@@ -13,7 +13,7 @@
 
 #include "globals.h"
 
-void add_reflector(char * reflector) {
+void owd_add_reflector(char * reflector) {
 	owd_data_t * baseline, * recent;
 
 	baseline = calloc(1, sizeof(owd_data_t));
@@ -31,6 +31,7 @@ void add_reflector(char * reflector) {
 void * baseliner_loop()
 {
 	reflector_t * reflector;
+	int reselection_trigger = 1;
 	double slow_factor = ewma_factor(tick_duration, 135);
 	double fast_factor = ewma_factor(tick_duration, 0.4);
 
@@ -39,7 +40,7 @@ void * baseliner_loop()
 		char ip[INET_ADDRSTRLEN];
 		inet_ntop(AF_INET, &reflector->addr->sin_addr, (char * restrict) &ip, INET_ADDRSTRLEN);
 		printf("adding %s\n", ip);
-		add_reflector((char *) &ip);
+		owd_add_reflector((char *) &ip);
 	}
 	pthread_rwlock_unlock(&reflectors_lock);
 
@@ -104,7 +105,12 @@ void * baseliner_loop()
 		// if this reflection is more than 5 seconds higher than baseline.. mark it no good and trigger a reselection
 		if (time_data->uplink_time > baseline->up_ewma + 5000 || time_data->downlink_time > baseline->down_ewma + 5000)
 		{
-			// TODO: Implement reflector selector
+			// 5000 ms is a weird amount of time for a ping. let's mark this old and no good
+			baseline->last_receive_time_s = time_data->last_receive_time_s - 60;
+			recent->last_receive_time_s = time_data->last_receive_time_s - 60;
+			
+			// trigger a reselection of reflectors here
+			pthread_queue_sendmsg(reselector_channel, &reselection_trigger, PTHREAD_NOWAIT);
 		}
 		else
 		{
