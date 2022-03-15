@@ -35,14 +35,14 @@ void * baseliner_loop()
 	double slow_factor = ewma_factor(tick_duration, 135);
 	double fast_factor = ewma_factor(tick_duration, 0.4);
 
-	pthread_rwlock_rdlock(&reflectors_lock);
-	for (reflector = reflectors; reflector != NULL; reflector = reflector->hh.next) {
+	pthread_rwlock_rdlock(&reflector_peers_lock);
+	for (reflector = reflector_peers; reflector != NULL; reflector = reflector->hh.next) {
 		char ip[INET_ADDRSTRLEN];
 		inet_ntop(AF_INET, &reflector->addr->sin_addr, (char * restrict) &ip, INET_ADDRSTRLEN);
 		printf("adding %s\n", ip);
 		owd_add_reflector((char *) &ip);
 	}
-	pthread_rwlock_unlock(&reflectors_lock);
+	pthread_rwlock_unlock(&reflector_peers_lock);
 
 	while (1)
 	{
@@ -68,7 +68,7 @@ void * baseliner_loop()
 		if (!baseline || !recent)
 		{
 			pthread_rwlock_unlock(&owd_lock);
-			add_reflector((char * ) time_data->reflector);
+			owd_add_reflector((char * ) time_data->reflector);
 			pthread_rwlock_rdlock(&owd_lock);
 		}
 

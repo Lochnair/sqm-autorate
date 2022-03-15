@@ -18,6 +18,7 @@ sources = [
     'src/pinger_udp.c',
     'src/pthread_ext_common.c',
     'src/pthread_queue.c',
+    'src/ratecontroller.c',
     'src/reflectors.c',
     'src/utils.c'
 ]

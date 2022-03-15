@@ -13,6 +13,7 @@
 
 #include "baseliner.h"
 #include "pinger.h"
+#include "ratecontroller.h"
 #include "reflectors.h"
 #include "utils.h"
 
@@ -25,14 +26,17 @@ pthread_rwlock_t owd_lock;
 
 const float tick_duration = 0.5;
 
-//static const char *const ips[] = {"65.21.108.153", "5.161.66.148", "185.243.217.26", "185.175.56.188", "176.126.70.119", "216.128.149.82", "108.61.220.16"};
-static const char *const ips[] = {"9.9.9.9", "9.9.9.10", "172.18.254.1", "208.67.222.220", "208.67.222.222"};
-//struct sockaddr_in *reflectors;
+reflector_t * reflector_peers = NULL;
+pthread_rwlock_t reflector_peers_lock;
 
-reflector_t * reflectors = NULL;
-pthread_rwlock_t reflectors_lock;
+reflector_t * reflector_pool = NULL;
+pthread_rwlock_t reflector_pool_lock;
 
 pthread_queue_t * reselector_channel;
+
+char * dl_if, * ul_if;
+
+char * rx_bytes_path, * tx_bytes_path;
 
 int get_icmp_socket()
 {
@@ -76,48 +80,163 @@ int get_udp_socket()
     return udp_sock_fd;
 }
 
-int init_reflectors()
+int test_if_file_exists(char * path, int retries, int retry_time)
 {
-	pthread_rwlock_wrlock(&reflectors_lock);
-	
-	int reflectors_len = sizeof(ips) / sizeof(ips[0]);
+	FILE * test_file = fopen(path, "r");
 
-	for (int i = 0; i < reflectors_len; i++)
+	if (test_file == NULL)
 	{
-		reflector_t * new_reflector = calloc(1, sizeof(reflector_t));
-		new_reflector->addr = calloc(1, sizeof(struct sockaddr_in));
+		/*
+		 * Let's wait and retry a few times before failing hard. These files typically
+         * take some time to be generated following a reboot.
+		 */
+		struct timespec wait_time = {.tv_sec = retry_time};
 
-		strcpy((char *) &new_reflector->ip, ips[i]);
-		inet_pton(AF_INET, (char *) &new_reflector->ip, &new_reflector->addr->sin_addr);
-		new_reflector->addr->sin_port = htons(62222);
-		HASH_ADD_STR(reflectors, ip, new_reflector);
+		for (int i = 0; i < retries; i++)
+		{
+			printf("Stats file %s not yet available. Will retry again in %ld seconds. (Attempt %d of %d)\n", path, wait_time.tv_sec, i, retries);
+			nanosleep(&wait_time, NULL);
+			test_file = fopen(path, "r");
+			if (test_file)
+			{
+				break;
+			}
+		}
+
+		if (test_file == NULL)
+		{
+			printf("Could not open stats file: %s\n", path);
+			exit(1);
+		}
 	}
 
-	pthread_rwlock_unlock(&reflectors_lock);
-
-	return 0;
+	fclose(test_file);
+	return 1;
 }
+
+void set_statistics_paths()
+{
+	printf("dl_if: %s\n", dl_if);
+	printf("ul_if: %s\n", ul_if);
+
+	// Verify these are correct using "cat /sys/class/..."
+	if (strstr(dl_if, "ifb") == dl_if || strstr(dl_if, "veth") == dl_if)
+	{
+		// length of constants + interface length and space for null terminator
+		rx_bytes_path = calloc(1, 35 + strlen(dl_if) + 1);
+		strcat(rx_bytes_path, "/sys/class/net/");
+		strcat(rx_bytes_path, dl_if);
+		strcat(rx_bytes_path, "/statistics/tx_bytes");
+	}
+	else if(strncmp(dl_if, "br-lan", 6) == 0)
+	{
+		// length of constants + interface length and space for null terminator
+		rx_bytes_path = calloc(1, 35 + strlen(ul_if) + 1);
+		strcat(rx_bytes_path, "/sys/class/net/");
+		strcat(rx_bytes_path, ul_if);
+		strcat(rx_bytes_path, "/statistics/rx_bytes");
+	}
+	else
+	{
+		// length of constants + interface length and space for null terminator
+		rx_bytes_path = calloc(1, 35 + strlen(dl_if) + 1);
+		strcat(rx_bytes_path, "/sys/class/net/");
+		strcat(rx_bytes_path, dl_if);
+		strcat(rx_bytes_path, "/statistics/rx_bytes");
+	}
+
+	if (strstr(ul_if, "ifb") == ul_if || strstr(ul_if, "veth") == ul_if)
+	{
+		// length of constants + interface length and space for null terminator
+		tx_bytes_path = calloc(1, 35 + strlen(ul_if) + 1);
+		strcat(tx_bytes_path, "/sys/class/net/");
+		strcat(tx_bytes_path, ul_if);
+		strcat(tx_bytes_path, "/statistics/rx_bytes");
+	}
+	else
+	{
+		// length of constants + interface length and space for null terminator
+		tx_bytes_path = calloc(1, 35 + strlen(ul_if) + 1);
+		strcat(tx_bytes_path, "/sys/class/net/");
+		strcat(tx_bytes_path, ul_if);
+		strcat(tx_bytes_path, "/statistics/tx_bytes");
+	}
+
+	printf("rx path: %s\n", rx_bytes_path);
+	printf("tx path: %s\n", tx_bytes_path);
+
+	test_if_file_exists(rx_bytes_path, 12, 5);
+	printf("Download device stats file found! Continuing...\n");
+	test_if_file_exists(tx_bytes_path, 12, 5);
+	printf("Upload device stats file found! Continuing...\n");
+}
+
+#define CREATE_THREAD(name, function) ({\
+	int name_create_result; \
+	pthread_t name_thread; \
+	if ((name_create_result = pthread_create(&name_thread, NULL, function, NULL)) != 0) \
+	{\
+		printf("failed to create %s thread: %d\n", name, t);\
+		exit(1);\
+	}\
+	pthread_setname_np(name_thread, name);\
+})
+
+#define JOIN_THREAD(name) ({\
+	int name_status_ret; \
+	void *name_status; \
+	if ((name_status_ret = pthread_join(name_thread, &name_status)) != 0) \
+	{\
+		printf("Error in %s thread join: %d\n", name, name_status_ret);\
+	}\
+})
 
 int main()
 {
+	time_t now;
+
+	// Initialize random number generator
+	srand((unsigned) time(&now));
+
 	if ((pthread_rwlock_init(&owd_lock, NULL)) != 0)
 	{
 		printf("can't create rwlock");
 		return 1;
 	}
 
-	if ((pthread_rwlock_init(&reflectors_lock, NULL)) != 0)
+	if ((pthread_rwlock_init(&reflector_peers_lock, NULL)) != 0)
 	{
 		printf("can't create rwlock");
 		return 1;
 	}
 
-	load_reflector_list("./reflectors-icmp.csv", &reflectors);
+	if ((pthread_rwlock_init(&reflector_pool_lock, NULL)) != 0)
+	{
+		printf("can't create rwlock");
+		return 1;
+	}
+
+	load_initial_peers();
+	load_reflector_list("./reflectors-icmp.csv");
+
+	dl_if = "lanifb";
+	ul_if = "lan";
+
+	set_statistics_paths();
 
 	sock_fd = get_icmp_socket();
 
 	pthread_queue_create(&baseliner_queue, NULL, 32, sizeof(time_data_t));
 	pthread_queue_create(&reselector_channel, NULL, 10, 1);
+
+	/*
+	 * Set initial TC values to minimum
+     * so there should be no initial bufferbloat to
+     * fool the baseliner
+	 */
+	update_cake_bandwidth(dl_if, 5000);
+	update_cake_bandwidth(ul_if, 2000);
+	nsleep(0, 5e8);
 
 	pthread_t baseliner_thread;
 	pthread_t receiver_thread;
@@ -152,6 +271,7 @@ int main()
 
 	void *baseliner_status;
 	void *receiver_status;
+	void *reselector_status;
 	void *sender_status;
 
 	if ((t = pthread_join(baseliner_thread, &baseliner_status)) != 0)

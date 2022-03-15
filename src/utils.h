@@ -22,6 +22,9 @@ void hexDump (
     int perLine
 );
 
-int load_reflector_list(char * path, reflector_t ** out);
+int load_initial_peers();
+int load_reflector_list(char * path);
+
+int nsleep(long sec, long nsec);
 
 #endif // UTILS_H

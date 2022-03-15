@@ -81,14 +81,14 @@ void *icmp_receiver_loop(int sock_fd)
 		time_data_t time_data;
 		inet_ntop(AF_INET, &(remote_addr.sin_addr), (char *) &time_data.reflector, INET_ADDRSTRLEN);
 
-		pthread_rwlock_rdlock(&reflectors_lock);
+		pthread_rwlock_rdlock(&reflector_peers_lock);
 		reflector_t * reflector = NULL;
-		HASH_FIND_STR(reflectors, time_data.reflector, reflector);
+		HASH_FIND_STR(reflector_peers, time_data.reflector, reflector);
 
 		if (!reflector) // if reflector not in hash table, ignore it
 			continue;
 
-		pthread_rwlock_unlock(&reflectors_lock);
+		pthread_rwlock_unlock(&reflector_peers_lock);
 
 		time_data.originate_timestamp = ntohl(hdr->originateTime);
 		time_data.receive_timestamp = ntohl(hdr->receiveTime);

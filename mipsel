@@ -1,6 +1,6 @@
 [constants]
 arch = 'mipsel-linux-muslsf'
-common_flags = ['--sysroot=/usr/' + arch]
+common_flags = ['--sysroot=/usr/' + arch, '-Os']
 toolchain = '/usr/' + arch +'/bin/'
 
 [host_machine]
