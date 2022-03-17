@@ -171,25 +171,23 @@ void set_statistics_paths()
 	printf("Upload device stats file found! Continuing...\n");
 }
 
-#define CREATE_THREAD(name, function) ({\
-	int name_create_result; \
-	pthread_t name_thread; \
-	if ((name_create_result = pthread_create(&name_thread, NULL, function, NULL)) != 0) \
+#define CREATE_THREAD(name, function)\
+	int name##_create_result; \
+	pthread_t name##_thread; \
+	if ((name##_create_result = pthread_create(&name##_thread, NULL, function, NULL)) != 0) \
 	{\
-		printf("failed to create %s thread: %d\n", name, t);\
+		printf("failed to create %s thread: %d\n", #name, name##_create_result);\
 		exit(1);\
 	}\
-	pthread_setname_np(name_thread, name);\
-})
+	pthread_setname_np(name##_thread, #name);
 
-#define JOIN_THREAD(name) ({\
-	int name_status_ret; \
-	void *name_status; \
-	if ((name_status_ret = pthread_join(name_thread, &name_status)) != 0) \
+#define JOIN_THREAD(name)\
+	int name##_status_ret; \
+	void *name##_status; \
+	if ((name##_status_ret = pthread_join(name##_thread, &name##_status)) != 0) \
 	{\
-		printf("Error in %s thread join: %d\n", name, name_status_ret);\
-	}\
-})
+		printf("Error in %s thread join: %d\n", #name, name##_status_ret);\
+	}
 
 int main()
 {
@@ -238,61 +236,20 @@ int main()
 	update_cake_bandwidth(ul_if, 2000);
 	nsleep(0, 5e8);
 
-	pthread_t baseliner_thread;
-	pthread_t receiver_thread;
-	pthread_t reselector_thread;
-	pthread_t sender_thread;
+	CREATE_THREAD(baseliner, baseliner_loop);
+	CREATE_THREAD(receiver, receiver_loop);
+	CREATE_THREAD(reselector, reflector_peer_selector);
+	CREATE_THREAD(sender, sender_loop);
 
-	int t;
-	if ((t = pthread_create(&baseliner_thread, NULL, baseliner_loop, NULL)) != 0)
-	{
-		printf("failed to create baseliner thread: %d\n", t);
-	}
+	// sleep 10 seconds before we start adjusting speeds
+	nsleep(10, 0);
+	CREATE_THREAD(ratecontroller, ratecontroller_loop);
 
-	if ((t = pthread_create(&receiver_thread, NULL, receiver_loop, NULL)) != 0)
-	{
-		printf("failed to create icmp receiver thread: %d\n", t);
-	}
-
-	if ((t = pthread_create(&reselector_thread, NULL, reflector_peer_selector, NULL)) != 0)
-	{
-		printf("failed to create reselector thread: %d\n", t);
-	}
-
-	if ((t = pthread_create(&sender_thread, NULL, sender_loop, NULL)) != 0)
-	{
-		printf("failed to create sender thread: %d\n", t);
-	}
-
-	pthread_setname_np(baseliner_thread, "baseliner");
-	pthread_setname_np(receiver_thread, "receiver");
-	pthread_setname_np(reselector_thread, "reselector");
-	pthread_setname_np(sender_thread, "sender");
-
-	void *baseliner_status;
-	void *receiver_status;
-	void *reselector_status;
-	void *sender_status;
-
-	if ((t = pthread_join(baseliner_thread, &baseliner_status)) != 0)
-	{
-		printf("Error in baseliner thread join: %d\n", t);
-	}
-
-	if ((t = pthread_join(receiver_thread, &receiver_status)) != 0)
-	{
-		printf("Error in icmp receiver thread join: %d\n", t);
-	}
-
-	if ((t = pthread_join(sender_thread, &sender_status)) != 0)
-	{
-		printf("Error in sender thread join: %d\n", t);
-	}
-
-	/*struct timeval read_timeout;
-	read_timeout.tv_sec = 0;
-	read_timeout.tv_usec = 100000;
-	//setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &read_timeout, sizeof read_timeout);*/
+	JOIN_THREAD(baseliner);
+	JOIN_THREAD(ratecontroller);
+	JOIN_THREAD(receiver);
+	JOIN_THREAD(reselector);
+	JOIN_THREAD(sender);
 
 	return 0;
 }
