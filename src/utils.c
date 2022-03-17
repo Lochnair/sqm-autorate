@@ -227,6 +227,17 @@ int load_reflector_list(char * path)
 
 int nsleep(long sec, long nsec)
 {
-    struct timespec sleep_time = {.tv_sec = sec, .tv_nsec = nsec};
-    return nanosleep(sleep_time, NULL);
+    return nanosleep(&(struct timespec) {.tv_sec = sec, .tv_nsec = nsec}, NULL);
+}
+
+// Fisher-Yates shuffle
+void shuffle_table(int *array, int n) {
+     int i, j, tmp; // create local variables to hold values for shuffle
+
+     for (i = n - 1; i > 0; i--) {
+         j = rand() % (i + 1);
+         tmp = array[j];
+         array[j] = array[i];
+         array[i] = tmp;
+     }
 }
