@@ -8,18 +8,18 @@
 
 int rtt_sort(void * a, void * b)
 {
-    int rtt_a = *((int *) a);
-    int rtt_b = *((int *) b);
+    reflector_t * refl_a = (reflector_t *) a;
+    reflector_t * refl_b = (reflector_t *) b;
     
-    return rtt_a - rtt_b;
+    return refl_a->rtt - refl_b->rtt;
 }
 
 void * reflector_peer_selector()
 {
     // we start out reselecting every 30 seconds, then after 40 reselections we move to every 15 mins
     struct timespec selector_sleep_time = {.tv_sec = 30};
-    struct timespec baseline_sleep_time = {.tv_sec = floor(tick_duration * M_PI),
-                                           .tv_nsec = floor(fmod(tick_duration * M_PI, 1) * 1e9)};
+    struct timespec baseline_sleep_time = {.tv_sec = floor(settings.tick_duration * M_PI),
+                                           .tv_nsec = floor(fmod(settings.tick_duration * M_PI, 1) * 1e9)};
     int reselection_count = 0;
     
     // Initial wait of several seconds to allow some OWD data to build up
@@ -29,7 +29,7 @@ void * reflector_peer_selector()
     {
         uint8_t reselect;
         pthread_queue_getmsg(reselector_channel, &reselect, (selector_sleep_time.tv_sec * 1000) + (selector_sleep_time.tv_nsec / 1e6));
-        printf("Starting reselection\n");
+        printf("[resel] Starting reselection\n");
 
         reselection_count = reselection_count + 1;
         
@@ -57,6 +57,7 @@ void * reflector_peer_selector()
         reflector_t * current_reflector, * tmp;
 
         HASH_ITER(hh, reflector_peers, current_reflector, tmp) {
+            printf("[resel] Removing reflector %s\n", current_reflector->ip);
             HASH_DEL(reflector_peers, current_reflector);
 
             if (current_reflector->addr)
@@ -74,6 +75,8 @@ void * reflector_peer_selector()
             char * ip = calloc(1, INET_ADDRSTRLEN + 1);
             strncpy(ip, (char *) &(pool[y]).ip, INET_ADDRSTRLEN);
 
+
+            printf("[resel] Adding reflector %s for baselining\n", ip);
             HASH_ADD_STR(reflector_peers, ip, &pool[y]);
         }
 
@@ -92,20 +95,20 @@ void * reflector_peer_selector()
             {
                 int rtt = recent->down_ewma + recent->up_ewma;
 
-                if (rtt > 0)
+                if (rtt > 0 && rtt < 50000)
                 {
-                    printf("Candidate reflector: %s RTT: %d\n", current_reflector->ip, rtt);
+                    printf("[resel] Candidate reflector: %s RTT: %d\n", current_reflector->ip, rtt);
                     current_reflector->rtt = rtt;
                 }
                 else
                 {
-                    printf("Dropping candidate with negative RTT: %s\n", current_reflector->ip);
+                    printf("[resel] Dropping candidate with RTT outside thresholds: %s\n", current_reflector->ip);
                     HASH_DEL(reflector_peers, current_reflector);
                 }
             }
             else
             {
-                printf("No data found from candidate reflector: %s - skipping\n", current_reflector->ip);
+                printf("[resel] No data found from candidate reflector: %s - skipping\n", current_reflector->ip);
             }
         }
 
@@ -115,11 +118,18 @@ void * reflector_peer_selector()
         // Keep only the best 5 reflectors
         int del_i = 0;
         HASH_ITER(hh, reflector_peers, current_reflector, tmp) {
-            if (del_i > 4)
-                HASH_DEL(reflector_peers, current_reflector);
+
+            if(del_i < 5)
+            {
+                printf("[resel] Fastest candidate %s: %d\n", current_reflector->ip, current_reflector->rtt);
+            }
             else
-                printf("Fastest candidate %s: %d\n", current_reflector->ip, current_reflector->rtt);
-            
+            {
+                printf("[resel] Removing candidate reflector %s\n", current_reflector->ip);
+                HASH_DEL(reflector_peers, current_reflector);
+
+            }
+
             del_i++;
         }
 

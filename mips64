@@ -1,0 +1,18 @@
+[constants]
+arch = 'mips64-linux-muslsf'
+common_flags = ['--sysroot=/usr/' + arch, '-Os']
+toolchain = '/usr/' + arch +'/bin/'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'x86'
+cpu = 'x86_64'
+endian = 'little'
+
+[properties]
+c_args = common_flags
+
+[binaries]
+c = toolchain + arch + '-gcc'
+cpp = toolchain + arch + '-g++'
+strip = toolchain + arch + '-strip'

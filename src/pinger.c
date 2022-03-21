@@ -25,20 +25,17 @@ void * sender_loop()
 	while (1)
 	{
 		pthread_rwlock_rdlock(&reflector_peers_lock);
-		reflector_t * reflector;
+		reflector_t * reflector = NULL;
 
 		int amount_of_reflectors = HASH_COUNT(reflector_peers);
 
 		double sec;
-		double nsec = modf(tick_duration / amount_of_reflectors, &sec) * 1e9;
+		double nsec = modf(settings.tick_duration / amount_of_reflectors, &sec) * 1e9;
 
 		wait_time.tv_sec = sec;
 		wait_time.tv_nsec = nsec;
 
 		for (reflector = reflector_peers; reflector != NULL; reflector = reflector->hh.next) {
-        	char str[INET_ADDRSTRLEN];
-
-			inet_ntop(AF_INET, &(reflector->addr->sin_addr), str, INET_ADDRSTRLEN);
 			icmp_ping_send(sock_fd, reflector->addr, htons(seq));
 
 			nanosleep(&wait_time, NULL);

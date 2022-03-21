@@ -20,6 +20,7 @@ sources = [
     'src/pthread_queue.c',
     'src/ratecontroller.c',
     'src/reflectors.c',
+    'src/settings.c',
     'src/utils.c'
 ]
 

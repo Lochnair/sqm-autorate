@@ -22,26 +22,26 @@ void owd_add_reflector(char * reflector) {
 	strcpy((char * restrict) &baseline->reflector, reflector);
 	strcpy((char * restrict) &recent->reflector, reflector);
 
-	pthread_rwlock_wrlock(&owd_lock);
 	HASH_ADD_STR(owd_baseline, reflector, baseline);
 	HASH_ADD_STR(owd_recent, reflector, recent);
-	pthread_rwlock_unlock(&owd_lock);
 }
 
 void * baseliner_loop()
 {
 	reflector_t * reflector;
 	int reselection_trigger = 1;
-	double slow_factor = ewma_factor(tick_duration, 135);
-	double fast_factor = ewma_factor(tick_duration, 0.4);
+	double slow_factor = ewma_factor(settings.tick_duration, 135);
+	double fast_factor = ewma_factor(settings.tick_duration, 0.4);
 
 	pthread_rwlock_rdlock(&reflector_peers_lock);
+	pthread_rwlock_wrlock(&owd_lock);
 	for (reflector = reflector_peers; reflector != NULL; reflector = reflector->hh.next) {
 		char ip[INET_ADDRSTRLEN];
 		inet_ntop(AF_INET, &reflector->addr->sin_addr, (char * restrict) &ip, INET_ADDRSTRLEN);
 		printf("adding %s\n", ip);
 		owd_add_reflector((char *) &ip);
 	}
+	pthread_rwlock_unlock(&owd_lock);
 	pthread_rwlock_unlock(&reflector_peers_lock);
 
 	while (1)
@@ -55,21 +55,20 @@ void * baseliner_loop()
 
 		owd_data_t * baseline = NULL, * recent = NULL;
 
-		printf("looking for %s\n", time_data->reflector);
-
 		/*HASH_ITER(hh, owd_baseline, baseline, tmp) {
 			printf("refl iter: %s, down_ewma: %f\n", baseline->reflector, baseline->down_ewma);
 		}*/
 
-		pthread_rwlock_rdlock(&owd_lock);
+		pthread_rwlock_wrlock(&owd_lock);
 		HASH_FIND_STR(owd_baseline, time_data->reflector, baseline);
 		HASH_FIND_STR(owd_recent, time_data->reflector, recent);
 
 		if (!baseline || !recent)
 		{
-			pthread_rwlock_unlock(&owd_lock);
 			owd_add_reflector((char * ) time_data->reflector);
-			pthread_rwlock_rdlock(&owd_lock);
+
+			HASH_FIND_STR(owd_baseline, time_data->reflector, baseline);
+			HASH_FIND_STR(owd_recent, time_data->reflector, recent);
 		}
 
 		if (!baseline->down_ewma)

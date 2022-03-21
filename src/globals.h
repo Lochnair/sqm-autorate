@@ -8,6 +8,7 @@
 #include "baseliner.h"
 #include "ratecontroller.h"
 #include "reflectors.h"
+#include "settings.h"
 
 extern pthread_queue_t * baseliner_queue;
 
@@ -22,11 +23,8 @@ extern pthread_queue_t * reselector_channel;
 extern owd_data_t * owd_baseline, * owd_recent;
 extern pthread_rwlock_t owd_lock;
 
+extern settings_t settings;
+
 extern int sock_fd;
-
-extern const float tick_duration;
-
-extern char * dl_if, * ul_if;
-extern char * rx_bytes_path, tx_bytes_path;
 
 #endif // GLOBALS_H

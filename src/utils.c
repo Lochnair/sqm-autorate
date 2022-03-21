@@ -14,6 +14,15 @@
 #include "reflectors.h"
 #include "utils.h"
 
+enum log_level {
+    TRACE = 6,
+    DEBUG = 5,
+    INFO = 4,
+    WARN = 3,
+    ERROR = 2,
+    FATAL = 1
+};
+
 unsigned short calculateChecksum(void *b, int len)
 {
 	unsigned short *buf = b;
@@ -39,6 +48,7 @@ struct timespec get_time()
 {
 	struct timespec time;
 	clock_gettime(CLOCK_REALTIME, &time);
+
 	return time;
 }
 
@@ -47,7 +57,9 @@ unsigned long get_time_since_midnight_ms()
     struct timespec time;
     clock_gettime(CLOCK_REALTIME, &time);
 
-    return (time.tv_sec % 86400 * 1000) + (time.tv_nsec / 1000000);
+    unsigned long result = (time.tv_sec % 86400 * 1000) + (time.tv_nsec / 1000000);
+
+    return result;
 }
 
 int get_rx_timestamp(int sock_fd, struct __kernel_timespec * rx_timestamp)
