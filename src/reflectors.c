@@ -14,6 +14,75 @@ int rtt_sort(void * a, void * b)
     return refl_a->rtt - refl_b->rtt;
 }
 
+int add_reflector(char * ip, reflector_t ** out, pthread_rwlock_t * out_lock)
+{
+    reflector_t * new_reflector = calloc(1, sizeof(reflector_t));
+    new_reflector->addr = calloc(1, sizeof(struct sockaddr_in));
+
+    strcpy((char *) &new_reflector->ip, ip);
+    inet_pton(AF_INET, (char *) &new_reflector->ip, &new_reflector->addr->sin_addr);
+    new_reflector->addr->sin_port = htons(62222);
+
+    pthread_rwlock_wrlock(out_lock);
+    HASH_ADD_STR(*out, ip, new_reflector);
+    pthread_rwlock_unlock(out_lock);
+
+    return 0;
+}
+
+int load_initial_peers()
+{
+    char * initial_reflectors[] = {"9.9.9.9", "8.238.120.14", "74.82.42.42", "194.242.2.2", "208.67.222.222", "94.140.14.14"};
+
+    for (int i = 0; i < sizeof(initial_reflectors) / sizeof(initial_reflectors[0]); i++) {
+        add_reflector(initial_reflectors[i], &reflector_peers, &reflector_peers_lock);
+    }
+
+    return 0;
+}
+
+int load_reflector_list(char * path)
+{
+    FILE * fp;
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+
+    fp = fopen(path, "r");
+    
+    if (fp == NULL)
+    {
+        printf("Could not open reflector file: %s\n", path);
+        return -1;
+    }
+
+    int i = 0;
+
+    while ((read = getline(&line, &len, fp)) != -1) {
+        // skip first line
+        if (i == 0) {
+            i++;
+            continue;
+        }
+
+        char * ip = strtok(line, ",");
+        add_reflector(ip, &reflector_pool, &reflector_pool_lock);
+        i++;
+    }
+
+    fclose(fp);
+    if (line)
+        free(line);
+
+    pthread_rwlock_rdlock(&reflector_pool_lock);
+    int reflector_count = HASH_COUNT(reflector_pool);
+    pthread_rwlock_unlock(&reflector_pool_lock);
+
+    printf("Reflector pool size: %d\n", reflector_count);
+
+    return 0;
+}
+
 void * reflector_peer_selector()
 {
     // we start out reselecting every 30 seconds, then after 40 reselections we move to every 15 mins

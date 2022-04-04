@@ -11,6 +11,9 @@ typedef struct reflector_s {
     UT_hash_handle hh;
 } reflector_t;
 
+int load_initial_peers();
+int load_reflector_list(char * path);
+
 void * reflector_peer_selector();
 
 #endif // REFLECTORS_H

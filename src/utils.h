@@ -22,9 +22,6 @@ void hexDump (
     int perLine
 );
 
-int load_initial_peers();
-int load_reflector_list(char * path);
-
 int nsleep(long sec, long nsec);
 
 void shuffle_table(int *array, int n);
