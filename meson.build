@@ -13,10 +13,12 @@ deps = [
 sources = [
     'src/main.c',
     'src/baseliner.c',
+    'src/hash_table.c',
     'src/log.c',
     'src/pinger.c',
     'src/pinger_icmp.c',
     'src/pinger_udp.c',
+    'src/prime.c',
     'src/pthread_ext_common.c',
     'src/pthread_queue.c',
     'src/ratecontroller.c',
