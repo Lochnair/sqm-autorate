@@ -13,6 +13,7 @@ deps = [
 sources = [
     'src/main.c',
     'src/baseliner.c',
+    'src/log.c',
     'src/pinger.c',
     'src/pinger_icmp.c',
     'src/pinger_udp.c',
