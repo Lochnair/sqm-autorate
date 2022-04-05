@@ -14,15 +14,6 @@
 #include "reflectors.h"
 #include "utils.h"
 
-enum log_level {
-    TRACE = 6,
-    DEBUG = 5,
-    INFO = 4,
-    WARN = 3,
-    ERROR = 2,
-    FATAL = 1
-};
-
 unsigned short calculateChecksum(void *b, int len)
 {
 	unsigned short *buf = b;
