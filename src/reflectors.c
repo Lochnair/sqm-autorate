@@ -1,47 +1,74 @@
 #define _GNU_SOURCE
+#include <arpa/inet.h>
 #include <math.h>
 #include <stdio.h>
 
 #include "globals.h"
+#include "utils.h"
 
 #define rand_in_range(min, max) rand() % (max + 1 - min) + min
 
-int rtt_sort(void * a, void * b)
+hash_table * reflector_peers = NULL;
+hash_table * reflector_pool = NULL;
+
+int rtt_sort(const void * a, const void * b)
 {
-    reflector_t * refl_a = (reflector_t *) a;
-    reflector_t * refl_b = (reflector_t *) b;
-    
+    if (a == NULL || b == NULL)
+        return 0;
+
+    ht_item * item_a = *(ht_item **) a;
+    ht_item * item_b = *(ht_item **) b;
+
+    if (item_a == NULL && item_b == NULL)
+        return 0;
+
+    log_debug("deref ptr a,b: %p,%p", item_a, item_b);
+
+    if (item_a == NULL)
+        return 1;
+
+    if (item_b == NULL)
+        return -1;
+
+    if (item_a == &HT_DELETED_ITEM || item_b == &HT_DELETED_ITEM)
+        return 0;
+
+    reflector_t * refl_a = (reflector_t *) item_a->value;
+    reflector_t * refl_b = (reflector_t *) item_b->value;
+
+    log_debug("rtt a,b: %d,%d", refl_a->rtt, refl_b->rtt);
+
     return refl_a->rtt - refl_b->rtt;
 }
 
-int add_reflector(char * ip, reflector_t ** out, pthread_rwlock_t * out_lock)
+void add_reflector(char * ip, hash_table * ht)
 {
     reflector_t * new_reflector = calloc(1, sizeof(reflector_t));
-    new_reflector->addr = calloc(1, sizeof(struct sockaddr_in));
+    strncpy(new_reflector->ip, ip, INET_ADDRSTRLEN);
 
-    strcpy((char *) &new_reflector->ip, ip);
-    inet_pton(AF_INET, (char *) &new_reflector->ip, &new_reflector->addr->sin_addr);
+    new_reflector->addr = calloc(1, sizeof(struct sockaddr_in));
     new_reflector->addr->sin_port = htons(62222);
 
-    pthread_rwlock_wrlock(out_lock);
-    HASH_ADD_STR(*out, ip, new_reflector);
-    pthread_rwlock_unlock(out_lock);
-
-    return 0;
+    inet_pton(AF_INET, ip, &new_reflector->addr->sin_addr);
+    ht_insert(ht, ip, (char *) new_reflector, sizeof(reflector_t));
 }
 
-int load_initial_peers()
+void load_initial_peers()
 {
     char * initial_reflectors[] = {"9.9.9.9", "8.238.120.14", "74.82.42.42", "194.242.2.2", "208.67.222.222", "94.140.14.14"};
 
+    pthread_rwlock_wrlock(&reflector_peers_lock);
+    reflector_peers = ht_new_sized(sizeof(initial_reflectors) / sizeof(initial_reflectors[0]));
+
     for (int i = 0; i < sizeof(initial_reflectors) / sizeof(initial_reflectors[0]); i++) {
-        add_reflector(initial_reflectors[i], &reflector_peers, &reflector_peers_lock);
+        log_debug("Adding initial peer: %s", initial_reflectors[i]);
+        add_reflector(initial_reflectors[i], reflector_peers);
     }
 
-    return 0;
+    pthread_rwlock_unlock(&reflector_peers_lock);
 }
 
-int load_reflector_list(char * path)
+void load_reflector_list(char * path)
 {
     FILE * fp;
     char * line = NULL;
@@ -52,11 +79,14 @@ int load_reflector_list(char * path)
     
     if (fp == NULL)
     {
-        printf("Could not open reflector file: %s\n", path);
-        return -1;
+        log_error("Could not open reflector file: %s", path);
+        return;
     }
 
     int i = 0;
+
+    pthread_rwlock_wrlock(&reflector_pool_lock);
+    reflector_pool = ht_new_sized(384);
 
     while ((read = getline(&line, &len, fp)) != -1) {
         // skip first line
@@ -66,7 +96,7 @@ int load_reflector_list(char * path)
         }
 
         char * ip = strtok(line, ",");
-        add_reflector(ip, &reflector_pool, &reflector_pool_lock);
+        add_reflector(ip, reflector_pool);
         i++;
     }
 
@@ -74,13 +104,8 @@ int load_reflector_list(char * path)
     if (line)
         free(line);
 
-    pthread_rwlock_rdlock(&reflector_pool_lock);
-    int reflector_count = HASH_COUNT(reflector_pool);
+    log_info("Reflector pool size: %d", reflector_pool->count);
     pthread_rwlock_unlock(&reflector_pool_lock);
-
-    printf("Reflector pool size: %d\n", reflector_count);
-
-    return 0;
 }
 
 void * reflector_peer_selector()
@@ -98,7 +123,7 @@ void * reflector_peer_selector()
     {
         uint8_t reselect;
         pthread_queue_getmsg(reselector_channel, &reselect, (selector_sleep_time.tv_sec * 1000) + (selector_sleep_time.tv_nsec / 1e6));
-        printf("[resel] Starting reselection\n");
+        log_info("Starting reselection");
 
         reselection_count = reselection_count + 1;
         
@@ -106,102 +131,108 @@ void * reflector_peer_selector()
             selector_sleep_time.tv_sec = 15 * 60; // 15 mins
 
         pthread_rwlock_rdlock(&reflector_pool_lock);
-        int pool_size = HASH_COUNT(reflector_pool);
-        reflector_t pool[pool_size];
-
-        reflector_t * pool_entry;
-
-        // copy pool entries into an array too more easily pick random entries
-        int i = 0;
-        for (pool_entry = reflector_pool; pool_entry != NULL; pool_entry = pool_entry->hh.next)
-        {
-            pool[i] = *pool_entry;
-            i++;
-        }
-
-        pthread_rwlock_unlock(&reflector_pool_lock);
+        int pool_size = reflector_pool->count;
+        
 
         // remove all reflectors currently in use
         pthread_rwlock_wrlock(&reflector_peers_lock);
-        reflector_t * current_reflector, * tmp;
-
-        HASH_ITER(hh, reflector_peers, current_reflector, tmp) {
-            printf("[resel] Removing reflector %s\n", current_reflector->ip);
-            HASH_DEL(reflector_peers, current_reflector);
-
-            if (current_reflector->addr)
-                free(current_reflector->addr);
-
-            free(current_reflector);
-        }
+        ht_del_hash_table(reflector_peers);
+        reflector_peers = ht_new();
 
         // pick 20 random reflectors and add them to the hash table for some re-baselining
-        for (int x = 0; x < 20; x++)
+        int target = fmin(20, pool_size);
+        int picked = 0;
+
+        while (picked < target)
         {
-            reflector_t * candidate = calloc(1, sizeof(reflector_t));
             int y = rand_in_range(0, pool_size);
-            strncpy(candidate->ip, (char *) &(pool[y]).ip, INET_ADDRSTRLEN);
-            char * ip = calloc(1, INET_ADDRSTRLEN + 1);
-            strncpy(ip, (char *) &(pool[y]).ip, INET_ADDRSTRLEN);
 
+            ht_item * item = reflector_pool->items[y];
 
-            printf("[resel] Adding reflector %s for baselining\n", ip);
-            HASH_ADD_STR(reflector_peers, ip, &pool[y]);
+            if (item == NULL || item == &HT_DELETED_ITEM)
+			    continue;
+
+            log_info("Adding reflector %s for baselining", item->key);
+            add_reflector(item->key, reflector_peers);
+            picked++;
         }
 
         pthread_rwlock_unlock(&reflector_peers_lock);
+        pthread_rwlock_unlock(&reflector_pool_lock);
 
         // Wait for several seconds to allow all reflectors to be re-baselined
         nanosleep(&baseline_sleep_time, NULL);
 
         pthread_rwlock_wrlock(&owd_lock);
+        pthread_rwlock_wrlock(&reflector_peers_lock);
 
-        HASH_ITER(hh, reflector_peers, current_reflector, tmp) {
-            owd_data_t * recent;
-            HASH_FIND_STR(owd_recent, current_reflector->ip, recent);
+        for (int i = 0; i < reflector_peers->size; i++)
+        {
+            ht_item * item = reflector_peers->items[i];
 
-            if (recent)
+            if (item == NULL || item == &HT_DELETED_ITEM)
+                continue;
+            
+            owd_data_t * data = (owd_data_t *) ht_search(owd_data, item->key);
+            reflector_t * reflector = (reflector_t *) item->value;
+
+            if (data)
             {
-                int rtt = recent->down_ewma + recent->up_ewma;
+                int rtt = data->recent_ewma_down + data->recent_ewma_up;
 
                 if (rtt > 0 && rtt < 50000)
                 {
-                    printf("[resel] Candidate reflector: %s RTT: %d\n", current_reflector->ip, rtt);
-                    current_reflector->rtt = rtt;
+                    log_info("Candidate reflector: %s RTT: %d", item->key, rtt);
+                    reflector->rtt = rtt;
                 }
                 else
                 {
-                    printf("[resel] Dropping candidate with RTT outside thresholds: %s\n", current_reflector->ip);
-                    HASH_DEL(reflector_peers, current_reflector);
+                    log_info("Dropping candidate with RTT outside thresholds: %s", item->key);
+                    ht_delete(reflector_peers, item->key);
                 }
             }
             else
             {
-                printf("[resel] No data found from candidate reflector: %s - skipping\n", current_reflector->ip);
+                log_info("No data found from candidate reflector: %s - skipping", item->key);
             }
         }
 
-        HASH_SORT(reflector_peers, rtt_sort);
+        log_debug("Copying %d reflectors", reflector_peers->count);
+        ht_item ** tmp = calloc(reflector_peers->count, sizeof(ht_item*));
+        // copy valid item pointers to tmp array for sorting
+        for (int i = 0; i < reflector_peers->size; i++)
+        {
+            ht_item * item = reflector_peers->items[i];
 
-        // TODO: Shuffle the reflectors to avoid overwhelming the good ones
-        // Keep only the best 5 reflectors
-        int del_i = 0;
-        HASH_ITER(hh, reflector_peers, current_reflector, tmp) {
+            if (item == NULL || item == &HT_DELETED_ITEM)
+                continue;
 
-            if(del_i < 5)
-            {
-                printf("[resel] Fastest candidate %s: %d\n", current_reflector->ip, current_reflector->rtt);
-            }
-            else
-            {
-                printf("[resel] Removing candidate reflector %s\n", current_reflector->ip);
-                HASH_DEL(reflector_peers, current_reflector);
 
-            }
-
-            del_i++;
+            reflector_t * reflector = (reflector_t *) item->value;
+            log_debug("item key: %s, item value: %p, reflector: %s", item->key, item->value, reflector->ip);
+            memcpy(&tmp[i], &item, sizeof(ht_item));
         }
+
+        // sort reflectors according to RTT
+        //qsort(tmp, reflector_peers->count, sizeof(ht_item *), rtt_sort);
+
+        // add 5 best reflectors back into new table
+        hash_table * new_ht = ht_new_sized(5);
+        for (int i = 0; i < 5; i++)
+        {
+            ht_item * item = tmp[i];
+            log_debug("item[%d]: %p", i, item);
+            /*ht_insert(new_ht, item->key, item->value, item->size);
+
+            free(item->key);
+            free(item->value);
+            free(item);*/
+        }
+
+        ht_del_hash_table(reflector_peers);
+        reflector_peers = new_ht;
 
         pthread_rwlock_unlock(&owd_lock);
+        pthread_rwlock_unlock(&reflector_peers_lock);
     }
 }

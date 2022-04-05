@@ -12,6 +12,7 @@
 #include "pthread_queue.h"
 
 #include "baseliner.h"
+#include "log.h"
 #include "pinger.h"
 #include "ratecontroller.h"
 #include "reflectors.h"
@@ -22,13 +23,8 @@ int sock_fd;
 
 pthread_queue_t * baseliner_queue;
 
-owd_data_t * owd_baseline, * owd_recent;
 pthread_rwlock_t owd_lock;
-
-reflector_t * reflector_peers = NULL;
 pthread_rwlock_t reflector_peers_lock;
-
-reflector_t * reflector_pool = NULL;
 pthread_rwlock_t reflector_pool_lock;
 
 pthread_queue_t * reselector_channel;
@@ -41,7 +37,7 @@ int get_icmp_socket()
 
     if ((icmp_sock_fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == -1)
 	{
-		printf("no icmp socket for you\n");
+		log_fatal("Couldn't get a ICMP socket: %d", icmp_sock_fd);
 		return -1;
 	}
 
@@ -49,8 +45,7 @@ int get_icmp_socket()
 
     if (setsockopt(icmp_sock_fd, SOL_SOCKET, SO_TIMESTAMPNS_NEW, &ts_enable, sizeof(ts_enable)) == -1)
 	{
-		printf("couldn't set ts option on icmp socket\n");
-		return -1;
+		log_error("Couldn't set timestamp option on ICMP socket");
 	}
 
     return icmp_sock_fd;
@@ -62,7 +57,7 @@ int get_udp_socket()
 
     if ((udp_sock_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
 	{
-		printf("no udp socket for you\n");
+		log_fatal("Couldn't get a UDP socket: %d", udp_sock_fd);
 		return -1;
 	}
 
@@ -70,19 +65,26 @@ int get_udp_socket()
 
     if (setsockopt(udp_sock_fd, SOL_SOCKET, SO_TIMESTAMPNS_NEW, &ts_enable, sizeof(ts_enable)) == -1)
 	{
-		printf("couldn't set ts option on udp socket\n");
-		return -1;
+		log_error("Couldn't set timestamp option on UDP socket");
 	}
 
     return udp_sock_fd;
 }
+
+#define CREATE_RWLOCK(name) \
+	int name##_create_result; \
+	if ((name##_create_result = pthread_rwlock_init(&name, NULL)) != 0) \
+	{\
+		log_fatal("Couldn't create rwlock %s -> %d", #name, name##_create_result); \
+		return 1; \
+	}
 
 #define CREATE_THREAD(name, function)\
 	int name##_create_result; \
 	pthread_t name##_thread; \
 	if ((name##_create_result = pthread_create(&name##_thread, NULL, function, NULL)) != 0) \
 	{\
-		printf("failed to create %s thread: %d\n", #name, name##_create_result);\
+		log_fatal("Failed to create %s thread: %d", #name, name##_create_result);\
 		exit(1);\
 	}\
 	pthread_setname_np(name##_thread, #name);
@@ -92,8 +94,18 @@ int get_udp_socket()
 	void *name##_status; \
 	if ((name##_status_ret = pthread_join(name##_thread, &name##_status)) != 0) \
 	{\
-		printf("Error in %s thread join: %d\n", #name, name##_status_ret);\
+		log_fatal("Error in %s thread join: %d", #name, name##_status_ret);\
 	}
+
+void log_locker(bool lock, void *udata)
+{
+	pthread_mutex_t * log_lock = (pthread_mutex_t *) udata;
+
+	if (lock)
+		pthread_mutex_lock(log_lock);
+	else
+		pthread_mutex_unlock(log_lock);
+}
 
 int main()
 {
@@ -102,30 +114,32 @@ int main()
 	// Initialize random number generator
 	srand((unsigned) time(&now));
 
-	if ((pthread_rwlock_init(&owd_lock, NULL)) != 0)
+	pthread_mutex_t log_lock;
+
+	if (pthread_mutex_init(&log_lock, NULL) != 0)
 	{
-		printf("can't create rwlock");
+		printf("Couldn't initialize mutex for logging.\n");
 		return 1;
 	}
 
-	if ((pthread_rwlock_init(&reflector_peers_lock, NULL)) != 0)
-	{
-		printf("can't create rwlock");
-		return 1;
-	}
+	// Initialize logger
+	log_set_lock(log_locker, &log_lock);
+	log_set_level(LOG_DEBUG);
 
-	if ((pthread_rwlock_init(&reflector_pool_lock, NULL)) != 0)
-	{
-		printf("can't create rwlock");
-		return 1;
-	}
+	log_info("Starting sqm-autorate v0.0.1");
 
-	load_settings(&settings);
+	CREATE_RWLOCK(owd_lock);
+	CREATE_RWLOCK(reflector_peers_lock);
+	CREATE_RWLOCK(reflector_pool_lock);
+
+	if (load_settings(&settings) != 0)
+		return 1;
+
+	if ((sock_fd = get_icmp_socket()) == -1)
+		return 1;
 
 	load_initial_peers();
 	load_reflector_list("./reflectors-icmp.csv");
-
-	sock_fd = get_icmp_socket();
 
 	pthread_queue_create(&baseliner_queue, NULL, 32, sizeof(time_data_t));
 	pthread_queue_create(&reselector_channel, NULL, 10, 1);

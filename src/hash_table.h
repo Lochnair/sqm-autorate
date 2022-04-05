@@ -21,6 +21,6 @@ hash_table * ht_new_sized(const int base_size);
 void ht_delete(hash_table * h, const char * key);
 void ht_insert(hash_table * ht, const char * key, const char * value, size_t len);
 char * ht_search(hash_table * ht, const char * key);
-void ht_delete(hash_table * h, const char * key);
+void ht_sort(hash_table * ht, int (*cmpfcn)(const void *, const void *));
 
 #endif // HASH_TABLE_H

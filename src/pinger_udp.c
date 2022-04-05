@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include "pinger_udp.h"
+#include "log.h"
 #include "utils.h"
 
 int udp_ping_send(int sock_fd, struct sockaddr_in *reflector, int seq)
@@ -29,7 +30,10 @@ int udp_ping_send(int sock_fd, struct sockaddr_in *reflector, int seq)
 
 	if ((t = sendto(sock_fd, &hdr, sizeof(hdr), 0, (const struct sockaddr *)reflector, sizeof(*reflector))) == -1)
 	{
-		printf("something wrong: %d\n", t);
+		char ip[INET_ADDRSTRLEN];
+		inet_ntop(AF_INET, &reflector->sin_addr, (char *) &ip, INET_ADDRSTRLEN);
+
+		log_error("Something went wrong when sending to IP: %s: %d", ip, t);
 		return 1;
 	}
 
@@ -51,19 +55,19 @@ void *udp_receiver_loop(int sock_fd)
 
 		if (recv != 32)
 		{
-			printf("udp: wrong: %d\n", recv);
+			log_debug("Wrong size of packet: %d", recv);
 			continue;
 		}
 
 		if (hdr.type != ICMP_TIMESTAMPREPLY)
 		{
-			printf("udp: get outta here: %d\n", hdr.type);
+			log_trace("Wrong ICMP type: %d", hdr.type);
 			continue;
 		}
 
 		if (get_rx_timestamp(sock_fd, &rxTimestamp) == -1)
 		{
-			printf("couldn't get rx ts, fallback to current time\n");
+			log_warn("Couldn't get receive timestamp, fallback to current time");
 			
 		}
 
@@ -78,7 +82,7 @@ void *udp_receiver_loop(int sock_fd)
 		unsigned long uplink_time = received_ts - originate_ts;
 		unsigned long downlink_time = now_ts - transmit_ts;
 
-		printf("Type: %4s  |  Reflector IP: %15s  |  Seq: %5d  |  Current time: %8ld  |  Originate: %8ld  |  Received time: %8ld  |  Transmit time: %8ld  |  RTT: %5ld  |  UL time: %5ld  |  DL time: %5ld\n", 
+		log_debug("Type: %4s  |  Reflector IP: %15s  |  Seq: %5d  |  Current time: %8ld  |  Originate: %8ld  |  Received time: %8ld  |  Transmit time: %8ld  |  RTT: %5ld  |  UL time: %5ld  |  DL time: %5ld", 
 		"UDP", ip, ntohs(hdr.sequence), now_ts, originate_ts, received_ts, transmit_ts, rtt, uplink_time, downlink_time);
 	}
 }

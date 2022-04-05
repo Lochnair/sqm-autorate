@@ -196,9 +196,37 @@ char* ht_search(hash_table * ht, const char * key) {
 
         index = ht_get_hash(key, ht->size, i);
         if (index > -1 && index < ht->size)
-        item = ht->items[index];
+            item = ht->items[index];
         i++;
     }
 
     return NULL;
+}
+
+void ht_sort(hash_table * ht, int (*cmpfcn)(const void *, const void *)) {
+    qsort(ht->items, ht->size, sizeof(ht_item *), cmpfcn);
+
+    hash_table * new_ht = ht_new_sized(ht->base_size);
+
+    for (int i = 0; i < ht->size; i++) {
+        ht_item* item = ht->items[i];
+        if (item != NULL && item != &HT_DELETED_ITEM) {
+            log_debug("insert after sort: %s, %p, %d",  item->key, item->value, item->size);
+            ht_insert(new_ht, item->key, item->value, item->size);
+        }
+    }
+
+    ht->base_size = new_ht->base_size;
+    ht->count = new_ht->count;
+
+    // To delete new_ht, we give it ht's size and items 
+    const int tmp_size = ht->size;
+    ht->size = new_ht->size;
+    new_ht->size = tmp_size;
+
+    ht_item** tmp_items = ht->items;
+    ht->items = new_ht->items;
+    new_ht->items = tmp_items;
+
+    ht_del_hash_table(new_ht);
 }

@@ -17,7 +17,7 @@ int test_if_file_exists(settings_t * out, char * path, int retries, int retry_ti
 
 		for (int i = 0; i < retries; i++)
 		{
-			printf("Stats file %s not yet available. Will retry again in %ld seconds. (Attempt %d of %d)\n", path, wait_time.tv_sec, i, retries);
+			log_warn("Stats file %s not yet available. Will retry again in %ld seconds. (Attempt %d of %d)", path, wait_time.tv_sec, i, retries);
 			nanosleep(&wait_time, NULL);
 			test_file = fopen(path, "r");
 			if (test_file)
@@ -28,7 +28,7 @@ int test_if_file_exists(settings_t * out, char * path, int retries, int retry_ti
 
 		if (test_file == NULL)
 		{
-			printf("Could not open stats file: %s\n", path);
+			log_fatal("Could not open stats file: %s", path);
 			exit(1);
 		}
 	}
@@ -42,8 +42,8 @@ void set_statistics_paths(settings_t * out)
     char * dl_if = out->dl_if;
     char * ul_if = out->ul_if;
 
-	printf("dl_if: %s\n", dl_if);
-	printf("ul_if: %s\n", dl_if);
+	log_info("Download interface: %s", dl_if);
+	log_info("Upload interface: %s", ul_if);
 
 	// Verify these are correct using "cat /sys/class/..."
 	if (strstr(dl_if, "ifb") == dl_if || strstr(dl_if, "veth") == dl_if)
@@ -88,13 +88,13 @@ void set_statistics_paths(settings_t * out)
 		strcat(out->tx_statistics_path, "/statistics/tx_bytes");
 	}
 
-	printf("rx path: %s\n", out->rx_statistics_path);
-	printf("tx path: %s\n", out->tx_statistics_path);
+	log_debug("Path to RX statistics: %s", out->rx_statistics_path);
+	log_debug("Path to TX statistics: %s", out->tx_statistics_path);
 
 	test_if_file_exists(out, out->rx_statistics_path, 12, 5);
-	printf("Download device stats file found! Continuing...\n");
+	log_info("Download device stats file found! Continuing...");
 	test_if_file_exists(out, out->tx_statistics_path, 12, 5);
-	printf("Upload device stats file found! Continuing...\n");
+	log_info("Upload device stats file found! Continuing...");
 }
 
 int load_settings(settings_t * out)
@@ -111,6 +111,12 @@ int load_settings(settings_t * out)
     
     out->dl_if = getenv("SQM_DL_IF");
 	out->ul_if = getenv("SQM_UL_IF");
+
+	if (out->dl_if == NULL || out->ul_if == NULL)
+	{
+		log_fatal("Interfaces not defined: dl_if -> %p | ul_if -> %p", out->dl_if, out->ul_if);
+		return 1;
+	}
 
     set_statistics_paths(out);
 

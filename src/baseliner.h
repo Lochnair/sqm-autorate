@@ -8,10 +8,11 @@
 
 typedef struct owd_data_s {
     char reflector[INET_ADDRSTRLEN];
-    float down_ewma;
-    float up_ewma;
+    float baseline_ewma_down;
+    float baseline_ewma_up;
+    float recent_ewma_down;
+    float recent_ewma_up;
     uint32_t last_receive_time_s;
-    UT_hash_handle hh;
 } owd_data_t;
 
 typedef struct time_data_s {

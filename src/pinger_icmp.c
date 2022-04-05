@@ -38,7 +38,7 @@ int icmp_ping_send(int sock_fd, struct sockaddr_in *reflector, int seq)
 		char ip[INET_ADDRSTRLEN];
 		inet_ntop(AF_INET, &reflector->sin_addr, (char *) &ip, INET_ADDRSTRLEN);
 
-		printf("something wrong for ip %s: %d\n", ip, t);
+		log_error("Something went wrong when sending to IP: %s: %d", ip, t);
 		return 1;
 	}
 
@@ -63,7 +63,7 @@ void *icmp_receiver_loop(int sock_fd)
 
 		if (len + sizeof(struct icmp_timestamp_hdr) > recv)
 		{
-			printf("Not enough data, skipping\n");
+			log_warn("Not enough data, skipping");
 			continue;
 		}
 
@@ -71,7 +71,7 @@ void *icmp_receiver_loop(int sock_fd)
 
 		if (hdr->type != ICMP_TIMESTAMPREPLY)
 		{
-			//printf("icmp: get outta here: %d\n", hdr->type);
+			log_trace("Wrong ICMP type: %d", hdr->type);
 			continue;
 		}
 
@@ -82,13 +82,13 @@ void *icmp_receiver_loop(int sock_fd)
 		inet_ntop(AF_INET, &(remote_addr.sin_addr), (char *) &time_data.reflector, INET_ADDRSTRLEN);
 
 		pthread_rwlock_rdlock(&reflector_peers_lock);
-		reflector_t * reflector = NULL;
-		HASH_FIND_STR(reflector_peers, time_data.reflector, reflector);
+		reflector_t * reflector = (reflector_t *) ht_search(reflector_peers, time_data.reflector);
+		pthread_rwlock_unlock(&reflector_peers_lock);
 
 		if (!reflector) // if reflector not in hash table, ignore it
+		{
 			continue;
-
-		pthread_rwlock_unlock(&reflector_peers_lock);
+		}
 
 		time_data.originate_timestamp = ntohl(hdr->originateTime);
 		time_data.receive_timestamp = ntohl(hdr->receiveTime);
@@ -98,7 +98,7 @@ void *icmp_receiver_loop(int sock_fd)
 		time_data.uplink_time = time_data.receive_timestamp - time_data.originate_timestamp;
 		time_data.last_receive_time_s = current_time.tv_sec + current_time.tv_nsec / 1e9;
 
-		printf("Type: %4s  |  Reflector IP: %15s  |  Seq: %5d  |  Current time: %8ld  |  Originate: %8ld  |  Received time: %8ld  |  Transmit time: %8ld  |  RTT: %5ld  |  UL time: %5ld  |  DL time: %5ld\n", 
+		log_debug("Type: %4s  |  Reflector IP: %15s  |  Seq: %5d  |  Current time: %8ld  |  Originate: %8ld  |  Received time: %8ld  |  Transmit time: %8ld  |  RTT: %5ld  |  UL time: %5ld  |  DL time: %5ld", 
 		"ICMP", time_data.reflector, ntohs(hdr->sequence), time_since_midnight_ms, (unsigned long) time_data.originate_timestamp, (unsigned long) time_data.receive_timestamp, (unsigned long) time_data.transmit_timestamp, (unsigned long) time_data.rtt, (unsigned long) time_data.uplink_time, (unsigned long) time_data.downlink_time);
 		free(buff);
 
