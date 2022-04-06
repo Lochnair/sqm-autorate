@@ -137,7 +137,7 @@ void * reflector_peer_selector()
         // remove all reflectors currently in use
         pthread_rwlock_wrlock(&reflector_peers_lock);
         ht_del_hash_table(reflector_peers);
-        reflector_peers = ht_new();
+        reflector_peers = ht_new_sized(20);
 
         // pick 20 random reflectors and add them to the hash table for some re-baselining
         int target = fmin(20, pool_size);
@@ -161,24 +161,31 @@ void * reflector_peer_selector()
         pthread_rwlock_unlock(&reflector_pool_lock);
 
         // Wait for several seconds to allow all reflectors to be re-baselined
+        log_debug("Sleeping while reflectors are baselined");
         nanosleep(&baseline_sleep_time, NULL);
 
-        pthread_rwlock_wrlock(&owd_lock);
         pthread_rwlock_wrlock(&reflector_peers_lock);
 
         for (int i = 0; i < reflector_peers->size; i++)
         {
+            log_debug("Iterating through rebaselined peers: %d", i);
             ht_item * item = reflector_peers->items[i];
 
             if (item == NULL || item == &HT_DELETED_ITEM)
+            {
+                log_debug("Item == NULL or soft-deleted");
                 continue;
+            }
             
+            pthread_rwlock_wrlock(&owd_lock);
             owd_data_t * data = (owd_data_t *) ht_search(owd_data, item->key);
             reflector_t * reflector = (reflector_t *) item->value;
 
             if (data)
             {
                 int rtt = data->recent_ewma_down + data->recent_ewma_up;
+                log_debug("Unlocking owd lock");
+                pthread_rwlock_unlock(&owd_lock);
 
                 if (rtt > 0 && rtt < 50000)
                 {
@@ -194,23 +201,26 @@ void * reflector_peer_selector()
             else
             {
                 log_info("No data found from candidate reflector: %s - skipping", item->key);
+                log_debug("Unlocking owd lock");
+                pthread_rwlock_unlock(&owd_lock);
             }
         }
 
         log_debug("Copying %d reflectors", reflector_peers->count);
         ht_item ** tmp = calloc(reflector_peers->count, sizeof(ht_item*));
         // copy valid item pointers to tmp array for sorting
-        for (int i = 0; i < reflector_peers->size; i++)
+
+        for (int i = 0, j = 0; j < reflector_peers->count; i++)
         {
             ht_item * item = reflector_peers->items[i];
+            log_debug("item[%d]: %p", i, item);
 
             if (item == NULL || item == &HT_DELETED_ITEM)
                 continue;
 
-
             reflector_t * reflector = (reflector_t *) item->value;
             log_debug("item key: %s, item value: %p, reflector: %s", item->key, item->value, reflector->ip);
-            memcpy(&tmp[i], &item, sizeof(ht_item));
+            tmp[j++] = item;
         }
 
         // sort reflectors according to RTT
@@ -232,7 +242,6 @@ void * reflector_peer_selector()
         ht_del_hash_table(reflector_peers);
         reflector_peers = new_ht;
 
-        pthread_rwlock_unlock(&owd_lock);
         pthread_rwlock_unlock(&reflector_peers_lock);
     }
 }
