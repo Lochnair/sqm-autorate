@@ -39,8 +39,11 @@ int update_cake_bandwidth(char * interface, double bandwidth)
 
         waitpid(pid, &ret, 0);
 
+        free(bandwidth_str);
         return ret;
     }
+
+    free(bandwidth_str);
 
     return 0;
 }

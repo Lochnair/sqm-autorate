@@ -50,6 +50,9 @@ void add_reflector(char * ip, hash_table * ht)
 
     inet_pton(AF_INET, ip, &new_reflector->addr->sin_addr);
     ht_insert(ht, ip, (char *) new_reflector, sizeof(reflector_t));
+
+    free(new_reflector->addr);
+    free(new_reflector);
 }
 
 void load_initial_peers()
