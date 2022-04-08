@@ -1,8 +1,9 @@
 #ifndef GLOBALS_H
 #define GLOBALS_H
 
-#define _GNU_SOURCE
+#define __USE_UNIX98 1
 #include <pthread.h>
+#include "pthread_ext_common.h"
 #include "pthread_queue.h"
 
 #include "baseliner.h"

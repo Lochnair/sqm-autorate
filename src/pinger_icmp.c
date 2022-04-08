@@ -10,10 +10,6 @@
 
 #include "baseliner.h"
 #include "pinger_icmp.h"
-
-#define __USE_UNIX98
-#include <pthread.h>
-#include "pthread_queue.h"
 #include "utils.h"
 
 #include "globals.h"

@@ -5,11 +5,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#define __USE_UNIX98
-#include <pthread.h>
-#include "pthread_ext_common.h"
-#include "pthread_queue.h"
+#include <string.h>
 
 #include "globals.h"
 

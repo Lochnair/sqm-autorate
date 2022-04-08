@@ -1,4 +1,4 @@
-#define _GNU_SOURCE
+#define __USE_UNIX98 1
 #include <features.h>
 
 #include <arpa/inet.h>

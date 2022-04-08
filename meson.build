@@ -10,6 +10,8 @@ deps = [
     thread_dep
 ]
 
+add_project_arguments('-D_GNU_SOURCE', language: 'c')
+
 sources = [
     'src/main.c',
     'src/baseliner.c',

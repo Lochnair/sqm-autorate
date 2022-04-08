@@ -6,10 +6,6 @@
 #include <sys/socket.h>
 #include <time.h>
 
-#define __USE_UNIX98
-#include <pthread.h>
-#include "pthread_queue.h"
-
 #include "globals.h"
 #include "reflectors.h"
 #include "utils.h"
