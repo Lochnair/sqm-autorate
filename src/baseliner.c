@@ -16,6 +16,7 @@ void owd_add_reflector(char * reflector) {
 	strncpy(entry->reflector, reflector, INET_ADDRSTRLEN);
 
 	ht_insert(owd_data, reflector, (char *) entry, sizeof(owd_data_t));
+	free(entry);
 }
 
 void * baseliner_loop()
