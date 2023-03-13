@@ -1,5 +1,5 @@
-project('sqm-autorate', 'c')
-
+project('sqm-autorate', 'c',
+        default_options : ['c_std=gnu17'])
 
 cc = meson.get_compiler('c')
 m_dep = cc.find_library('m', required : false)
