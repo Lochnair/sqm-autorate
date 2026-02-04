@@ -17,12 +17,13 @@
 
 local M = {}
 
+local math = require 'math'
 local os = require 'os'
 local posix = require 'posix'
 local util = require 'utility'
 local bit = require '_bit'
 
-local reflector_data, stats_queue, settings, identifier
+local reflector_data, stats_queue, settings, identifier, metrics_queue
 
 -- this is set to the right pinger module based on settings (e.g. if reflector_type == 'icmp' require pinger_icmp)
 local pinger_module
@@ -36,10 +37,11 @@ local function get_pid()
     return cur_process_id
 end
 
-function M.configure(arg_settings, arg_reflector_data, arg_stats_queue)
+function M.configure(arg_settings, arg_reflector_data, arg_stats_queue, arg_metrics_queue)
     settings = assert(arg_settings, 'settings are required')
     reflector_data = assert(arg_reflector_data, 'linda for reflector data required')
     stats_queue = assert(arg_stats_queue, 'linda for stats queue linda FIFO')
+    metrics_queue = arg_metrics_queue -- optional, may be nil if observability disabled
 
     if settings.reflector_type then
         local module = 'pinger_' .. settings.reflector_type
