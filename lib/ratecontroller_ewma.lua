@@ -392,6 +392,20 @@ function M.ratecontrol()
                         csv_fd:write(string.format("%d,%d,%f,%f,%f,%f,%d,%d\n", lastchg_s, lastchg_ns, rx_load, tx_load,
                             down_del_stat, up_del_stat, cur_dl_rate, cur_ul_rate))
                     end
+
+                    -- Emit rate metrics for observability if enabled
+                    if metrics_queue and settings.export_rate_metrics then
+                        metrics_queue:send("metrics", {
+                            metric_type = "rate",
+                            timestamp_ns = lastchg_s * 1e9 + lastchg_ns,
+                            rx_load = rx_load,
+                            tx_load = tx_load,
+                            delta_delay_down = down_del_stat,
+                            delta_delay_up = up_del_stat,
+                            dl_rate = cur_dl_rate,
+                            ul_rate = cur_ul_rate,
+                        })
+                    end
                 else
                     util.logger(util.loglevel.DEBUG,
                         string.format(
