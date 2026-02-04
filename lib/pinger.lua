@@ -76,11 +76,25 @@ function M.receiver()
     set_debug_threadname('ping_receiver')
     util.logger(util.loglevel.TRACE, "Entered receiver()")
 
+    local floor = math.floor
+
     while true do
         -- If we got stats, drop them onto the stats_queue for processing
         local stats = pinger_module.receive(identifier)
         if stats then
             stats_queue:send("stats", stats)
+
+            -- Emit ping metrics for observability if enabled
+            if metrics_queue and settings.export_ping_metrics then
+                metrics_queue:send("metrics", {
+                    metric_type = "ping",
+                    timestamp_ns = floor(stats.last_receive_time_s * 1e9),
+                    reflector = stats.reflector,
+                    rtt = stats.rtt,
+                    uplink_time = stats.uplink_time,
+                    downlink_time = stats.downlink_time,
+                })
+            end
         end
     end
 end
