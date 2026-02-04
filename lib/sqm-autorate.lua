@@ -89,6 +89,11 @@ local reselector_channel = lanes.linda()
 -- for ratecontrol algorithms that really getting the data as soon as it's ready
 local signal_to_ratecontrol = lanes.linda()
 
+-- The metrics_queue is intended to be a true FIFO queue for observability metrics.
+-- Producers (pinger, baseliner, ratecontroller) send metrics here for export to
+-- external platforms. The metrics_exporter thread consumes and sends via UDP/TCP.
+local metrics_queue = lanes.linda()
+
 ---------------------------- Begin Conductor ----------------------------
 local function conductor()
     util.logger(util.loglevel.TRACE, "Entered conductor()")
@@ -129,13 +134,22 @@ local function conductor()
 
     -- load all internal modules
     local baseliner_mod = lanes.require 'baseliner'
-        .configure(settings, owd_data, stats_queue, reselector_channel, signal_to_ratecontrol)
+        .configure(settings, owd_data, stats_queue, reselector_channel, signal_to_ratecontrol,
+            metrics_queue)
     local pinger_mod = lanes.require 'pinger'
-        .configure(settings, reflector_data, stats_queue)
+        .configure(settings, reflector_data, stats_queue, metrics_queue)
     local ratecontroller_mod = lanes.require('ratecontroller_' .. settings.rate_controller)
-        .configure(settings, owd_data, reflector_data, reselector_channel, signal_to_ratecontrol)
+        .configure(settings, owd_data, reflector_data, reselector_channel, signal_to_ratecontrol,
+            metrics_queue)
     local reflector_selector_mod = lanes.require 'reflector_selector'
         .configure(settings, owd_data, reflector_data, reselector_channel)
+
+    -- load metrics exporter if observability is enabled
+    local metrics_exporter_mod
+    if settings.observability_enabled then
+        metrics_exporter_mod = lanes.require 'metrics_exporter'
+            .configure(settings, metrics_queue)
+    end
 
     local threads = {}
     threads["receiver"] = lanes.gen("*", {
@@ -156,6 +170,13 @@ local function conductor()
     threads["regulator"] = lanes.gen("*", {
         required = { "posix", "posix.time" }
     }, ratecontroller_mod.ratecontrol)()
+
+    -- Start metrics exporter thread if observability is enabled
+    if settings.observability_enabled and metrics_exporter_mod then
+        threads["metrics_exporter"] = lanes.gen("*", {
+            required = { "posix.sys.socket", "posix.time" }
+        }, metrics_exporter_mod.exporter)()
+    end
 
     -- Start this whole thing in motion!
     local join_timeout = 0.5
