@@ -399,6 +399,198 @@ function M.initialise(requires, version, arg_reflector_data)
         M.output_statistics = not suppress_statistics
     end
 
+        -- Observability settings for remote metrics export
+    do
+        local observability_enabled
+        if uci_settings then
+            observability_enabled = tostring(uci_settings:get("sqm-autorate", "@observability[0]", "enabled"))
+            if observability_enabled then
+                observability_enabled = observability_enabled == "1" or
+                    string.lower(observability_enabled) == "true" or
+                    string.lower(observability_enabled) == "yes" or
+                    string.lower(observability_enabled) == "y"
+            end
+        end
+        observability_enabled = observability_enabled or (args and args.observability_enabled)
+        if not observability_enabled then
+            observability_enabled = tostring(os.getenv("SQMA_OBSERVABILITY_ENABLED"))
+            observability_enabled = observability_enabled == "1" or
+                string.lower(observability_enabled) == "true" or
+                string.lower(observability_enabled) == "yes" or
+                string.lower(observability_enabled) == "y"
+        end
+        M.observability_enabled = observability_enabled
+    end
+
+    do
+        local observability_protocol = uci_settings and
+            uci_settings:get("sqm-autorate", "@observability[0]", "protocol")
+        observability_protocol = observability_protocol or (args and args.observability_protocol)
+        observability_protocol = observability_protocol or (os.getenv("SQMA_OBSERVABILITY_PROTOCOL"))
+        if observability_protocol == nil then
+            observability_protocol = "udp"
+        end
+        M.observability_protocol = string.lower(observability_protocol)
+    end
+
+    do
+        local observability_host = uci_settings and uci_settings:get("sqm-autorate", "@observability[0]", "host")
+        observability_host = observability_host or (args and args.observability_host)
+        observability_host = observability_host or (os.getenv("SQMA_OBSERVABILITY_HOST"))
+        M.observability_host = observability_host
+    end
+
+    do
+        local observability_port = uci_settings and uci_settings:get("sqm-autorate", "@observability[0]", "port")
+        observability_port = observability_port or (args and args.observability_port)
+        observability_port = observability_port or (os.getenv("SQMA_OBSERVABILITY_PORT"))
+        if observability_port == nil then
+            observability_port = "8089"
+        end
+        M.observability_port = floor(tonumber(observability_port))
+    end
+
+    do
+        local export_ping_metrics
+        if uci_settings then
+            export_ping_metrics = tostring(uci_settings:get("sqm-autorate", "@observability[0]", "export_ping_metrics"))
+            if export_ping_metrics then
+                export_ping_metrics = export_ping_metrics == "1" or
+                    string.lower(export_ping_metrics) == "true" or
+                    string.lower(export_ping_metrics) == "yes" or
+                    string.lower(export_ping_metrics) == "y"
+            end
+        end
+        if export_ping_metrics == nil then
+            export_ping_metrics = tostring(os.getenv("SQMA_OBSERVABILITY_EXPORT_PING_METRICS"))
+            if export_ping_metrics == "nil" or export_ping_metrics == "" then
+                export_ping_metrics = false -- default disabled (high volume)
+            else
+                export_ping_metrics = export_ping_metrics == "1" or
+                    string.lower(export_ping_metrics) == "true" or
+                    string.lower(export_ping_metrics) == "yes" or
+                    string.lower(export_ping_metrics) == "y"
+            end
+        end
+        M.export_ping_metrics = export_ping_metrics
+    end
+
+    do
+        local export_rate_metrics
+        if uci_settings then
+            export_rate_metrics = tostring(uci_settings:get("sqm-autorate", "@observability[0]", "export_rate_metrics"))
+            if export_rate_metrics then
+                export_rate_metrics = export_rate_metrics == "1" or
+                    string.lower(export_rate_metrics) == "true" or
+                    string.lower(export_rate_metrics) == "yes" or
+                    string.lower(export_rate_metrics) == "y"
+            end
+        end
+        if export_rate_metrics == nil then
+            export_rate_metrics = tostring(os.getenv("SQMA_OBSERVABILITY_EXPORT_RATE_METRICS"))
+            if export_rate_metrics == "nil" or export_rate_metrics == "" then
+                export_rate_metrics = true -- default enabled
+            else
+                export_rate_metrics = export_rate_metrics == "1" or
+                    string.lower(export_rate_metrics) == "true" or
+                    string.lower(export_rate_metrics) == "yes" or
+                    string.lower(export_rate_metrics) == "y"
+            end
+        end
+        M.export_rate_metrics = export_rate_metrics
+    end
+
+    do
+        local export_baseline_metrics
+        if uci_settings then
+            export_baseline_metrics = tostring(
+                uci_settings:get("sqm-autorate", "@observability[0]", "export_baseline_metrics"))
+            if export_baseline_metrics then
+                export_baseline_metrics = export_baseline_metrics == "1" or
+                    string.lower(export_baseline_metrics) == "true" or
+                    string.lower(export_baseline_metrics) == "yes" or
+                    string.lower(export_baseline_metrics) == "y"
+            end
+        end
+        if export_baseline_metrics == nil then
+            export_baseline_metrics = tostring(os.getenv("SQMA_OBSERVABILITY_EXPORT_BASELINE_METRICS"))
+            if export_baseline_metrics == "nil" or export_baseline_metrics == "" then
+                export_baseline_metrics = false -- default disabled (high volume)
+            else
+                export_baseline_metrics = export_baseline_metrics == "1" or
+                    string.lower(export_baseline_metrics) == "true" or
+                    string.lower(export_baseline_metrics) == "yes" or
+                    string.lower(export_baseline_metrics) == "y"
+            end
+        end
+        M.export_baseline_metrics = export_baseline_metrics
+    end
+
+    do
+        local export_events
+        if uci_settings then
+            export_events = tostring(uci_settings:get("sqm-autorate", "@observability[0]", "export_events"))
+            if export_events then
+                export_events = export_events == "1" or
+                    string.lower(export_events) == "true" or
+                    string.lower(export_events) == "yes" or
+                    string.lower(export_events) == "y"
+            end
+        end
+        if export_events == nil then
+            export_events = tostring(os.getenv("SQMA_OBSERVABILITY_EXPORT_EVENTS"))
+            if export_events == "nil" or export_events == "" then
+                export_events = true -- default enabled
+            else
+                export_events = export_events == "1" or
+                    string.lower(export_events) == "true" or
+                    string.lower(export_events) == "yes" or
+                    string.lower(export_events) == "y"
+            end
+        end
+        M.export_events = export_events
+    end
+
+    do
+        local observability_batch_size = uci_settings and
+            uci_settings:get("sqm-autorate", "@observability[0]", "batch_size")
+        observability_batch_size = observability_batch_size or (args and args.observability_batch_size)
+        observability_batch_size = observability_batch_size or (os.getenv("SQMA_OBSERVABILITY_BATCH_SIZE"))
+        if observability_batch_size == nil then
+            observability_batch_size = "50"
+        end
+        M.observability_batch_size = floor(tonumber(observability_batch_size))
+    end
+
+    do
+        local batch_timeout_ms = uci_settings and
+            uci_settings:get("sqm-autorate", "@observability[0]", "batch_timeout_ms")
+        batch_timeout_ms = batch_timeout_ms or (args and args.observability_batch_timeout_ms)
+        batch_timeout_ms = batch_timeout_ms or (os.getenv("SQMA_OBSERVABILITY_BATCH_TIMEOUT_MS"))
+        if batch_timeout_ms == nil then
+            batch_timeout_ms = "100"
+        end
+        M.observability_batch_timeout_ms = floor(tonumber(batch_timeout_ms))
+    end
+
+    do
+        local host_tag = uci_settings and uci_settings:get("sqm-autorate", "@observability[0]", "host_tag")
+        host_tag = host_tag or (args and args.host_tag)
+        host_tag = host_tag or (os.getenv("SQMA_OBSERVABILITY_HOST_TAG"))
+        if host_tag == nil or host_tag == "" then
+            -- Try to get hostname as default
+            local handle = io.popen("hostname")
+            if handle then
+                host_tag = handle:read("*l")
+                handle:close()
+            end
+            if host_tag == nil or host_tag == "" then
+                host_tag = "sqm-autorate"
+            end
+        end
+        M.host_tag = host_tag
+    end
+
     M.enable_verbose_baseline_output =
         util.get_loglevel_name() == "TRACE" or
         util.get_loglevel_name() == "DEBUG"
