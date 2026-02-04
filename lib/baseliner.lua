@@ -110,6 +110,17 @@ function M.baseline_calculator()
                 reselector_channel:send("reselect", 1)
                 util.logger(util.loglevel.INFO, "Reselect signaled: uplink_time = " .. time_data.uplink_time ..
                     " | downlink_time = " .. time_data.downlink_time)
+
+                -- Emit event metric for observability if enabled
+                if metrics_queue and settings.export_events then
+                    metrics_queue:send("metrics", {
+                        metric_type = "event",
+                        timestamp_ns = time_data.last_receive_time_s * 1e9,
+                        event_name = "reselection",
+                        reason = "anomaly",
+                        reflector = time_data.reflector,
+                    })
+                end
             else
                 owd_baseline[time_data.reflector].up_ewma = owd_baseline[time_data.reflector].up_ewma * slow_factor +
                     (1 - slow_factor) * time_data.uplink_time
@@ -132,6 +143,19 @@ function M.baseline_calculator()
                 baseline = owd_baseline,
                 recent = owd_recent
             })
+
+            -- Emit baseline metrics for observability if enabled
+            if metrics_queue and settings.export_baseline_metrics then
+                metrics_queue:send("metrics", {
+                    metric_type = "baseline",
+                    timestamp_ns = time_data.last_receive_time_s * 1e9,
+                    reflector = time_data.reflector,
+                    baseline_up_ewma = owd_baseline[time_data.reflector].up_ewma,
+                    baseline_down_ewma = owd_baseline[time_data.reflector].down_ewma,
+                    recent_up_ewma = owd_recent[time_data.reflector].up_ewma,
+                    recent_down_ewma = owd_recent[time_data.reflector].down_ewma,
+                })
+            end
 
             if settings.log_level.level >= util.loglevel.DEBUG.level then
                 for ref, val in pairs(owd_baseline) do
