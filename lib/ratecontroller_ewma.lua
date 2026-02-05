@@ -111,8 +111,12 @@ function M.ratecontrol()
     local start_s, _ = util.get_current_time()
     local lastchg_s, lastchg_ns = util.get_current_time()
     local lastchg_t = lastchg_s - start_s + lastchg_ns / 1e9
+    -- Initialize lastdump_t to trigger first statistics dump ~10 seconds after startup
+    -- (rather than waiting the full 300-second interval)
     local lastdump_t = lastchg_t - 310
 
+    -- Start at 60% of base rate to avoid overwhelming the network during initialization
+    -- System will gradually probe upward as delay measurements are gathered
     local cur_dl_rate = base_dl_rate * 0.6
     local cur_ul_rate = base_ul_rate * 0.6
     update_cake_bandwidth(dl_if, cur_dl_rate)
@@ -120,6 +124,7 @@ function M.ratecontrol()
 
     local rx_bytes_file = io.open(base.rx_bytes_path)
     local tx_bytes_file = io.open(base.tx_bytes_path)
+    -- Convert bytes/sec to kbits/sec (uses 1000, not 1024, consistent with ISP speeds)
     local BYTES_TO_KBITS = 8 / 1000
 
     if not rx_bytes_file or not tx_bytes_file then
@@ -135,6 +140,11 @@ function M.ratecontrol()
 
     local safe_dl_rates = {}
     local safe_ul_rates = {}
+    -- Initialize safe_rates at 75-95% of base to prevent congestion during startup
+    -- random() returns [0.0, 1.0], so (random() * 0.2 + 0.75) gives [0.75, 0.95]
+    -- Assumption: base_rate is what the connection typically handles, so start conservative
+    -- to ensure line won't be overloaded before algorithm establishes baseline
+    -- Randomization provides diversity in history for better rate exploration
     for i = 0, histsize - 1, 1 do
         safe_dl_rates[i] = (random() * 0.2 + 0.75) * (base_dl_rate)
         safe_ul_rates[i] = (random() * 0.2 + 0.75) * (base_ul_rate)
@@ -258,6 +268,11 @@ function M.ratecontrol()
                         util.logger(util.loglevel.DEBUG,
                             "up_del_stat " .. up_del_stat .. " down_del_stat " .. down_del_stat)
 
+                        -- Increase rate when delay is acceptable and load is high (probing for bandwidth)
+                        -- Formula: rate * (1 + 10% * distance_from_max) + 3% base_rate
+                        -- - 0.1 (10%): multiplicative step scales with distance from safe maximum
+                        -- - 0.03 (3%): additive constant ensures minimum increase per adjustment
+                        -- Result: faster increases when far from ceiling, always at least 3% bump
                         if up_del_stat and up_del_stat < ul_max_delta_owd
                             and tx_load > high_load_level then
                             safe_ul_rates[nrate_up] = floor(cur_ul_rate * tx_load)
@@ -267,6 +282,8 @@ function M.ratecontrol()
                             nrate_up = nrate_up + 1
                             nrate_up = nrate_up % histsize
                         end
+                        -- Increase rate when delay is acceptable and load is high (probing for bandwidth)
+                        -- Formula: rate * (1 + 10% * distance_from_max) + 3% base_rate
                         if down_del_stat and down_del_stat < dl_max_delta_owd
                             and rx_load > high_load_level then
                             safe_dl_rates[nrate_down] = floor(cur_dl_rate * rx_load)
@@ -277,6 +294,10 @@ function M.ratecontrol()
                             nrate_down = nrate_down % histsize
                         end
 
+                        -- Decrease rate when delay threshold exceeded (backed off into congestion)
+                        -- 0.9: reduce by 10% as conservative backoff (avoids aggressive drops)
+                        -- Combined with load factor to scale proportionally to utilization
+                        -- Falls back to random safe rate from history if available
                         if up_del_stat > ul_max_delta_owd then
                             if #safe_ul_rates > 0 then
                                 next_ul_rate = min(0.9 * cur_ul_rate * tx_load,
@@ -285,6 +306,7 @@ function M.ratecontrol()
                                 next_ul_rate = 0.9 * cur_ul_rate * tx_load
                             end
                         end
+                        -- Decrease rate when delay threshold exceeded
                         if down_del_stat > dl_max_delta_owd then
                             if #safe_dl_rates > 0 then
                                 next_dl_rate = min(0.9 * cur_dl_rate * rx_load,
@@ -418,6 +440,7 @@ function M.ratecontrol()
             end
         end
 
+        -- Dump speed history to file every 300 seconds (5 minutes) for analysis
         if output_statistics and speeddump_fd and now_t - lastdump_t > 300 then
             for i = 0, histsize - 1 do
                 speeddump_fd:write(string.format("%f,%d,%f,%f\n", now_t, i, safe_ul_rates[i], safe_dl_rates[i]))
