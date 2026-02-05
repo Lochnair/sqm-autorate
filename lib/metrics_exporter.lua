@@ -306,7 +306,7 @@ function M.exporter()
 
     local batch_size = settings.observability_batch_size
     local batch_timeout = settings.observability_batch_timeout_ms / 1000
-    local batch_min = math.max(5, math.min(1, math.floor(batch_size * 0.1)))
+    local batch_min = math.max(1, math.floor(batch_size * 0.1))
 
     while true do
         local _, metrics = metrics_queue:receive(batch_timeout, metrics_queue.batched, "metrics", batch_min, batch_size)
