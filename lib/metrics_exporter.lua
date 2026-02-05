@@ -25,7 +25,6 @@ local util = require 'utility'
 local settings, metrics_queue
 
 local sock
-local sock_connected = false
 local last_connect_attempt = 0
 local reconnect_backoff = 1
 
@@ -135,7 +134,6 @@ local function connect_tcp()
 
     sock = create_tcp_socket()
     if not sock then
-        sock_connected = false
         return false
     end
 
@@ -152,14 +150,12 @@ local function connect_tcp()
             settings.observability_port .. " - " .. tostring(err))
         pcall(function() socket.close(sock) end)
         sock = nil
-        sock_connected = false
         return false
     end
 
     util.logger(util.loglevel.INFO,
         "Connected to metrics collector at " .. settings.observability_host .. ":" ..
         settings.observability_port)
-    sock_connected = true
     reconnect_backoff = 1
     return true
 end
@@ -185,38 +181,90 @@ local function send_udp(data)
 end
 
 local function send_tcp(data)
-    local now_s, _ = util.get_current_time()
+    local max_retries = 3
+    local retry_count = 0
 
-    if not sock_connected then
-        if now_s - last_connect_attempt < reconnect_backoff then
-            return false
+    while retry_count < max_retries do
+        local now_s, _ = util.get_current_time()
+        local should_retry = false
+
+        -- Ensure we have a connection
+        if not sock then
+            if now_s - last_connect_attempt < reconnect_backoff then
+                -- Backoff period not elapsed, wait and retry
+                util.nsleep(0, 100000000)  -- 100ms sleep
+                retry_count = retry_count + 1
+                should_retry = true
+            else
+                last_connect_attempt = now_s
+                if not connect_tcp() then
+                    reconnect_backoff = math.min(reconnect_backoff * 2, MAX_RECONNECT_BACKOFF)
+                    retry_count = retry_count + 1
+                    util.nsleep(0, 100000000)  -- 100ms sleep before retry
+                    should_retry = true
+                end
+                -- Connected successfully, reset backoff
+            end
         end
 
-        last_connect_attempt = now_s
-        if not connect_tcp() then
-            reconnect_backoff = math.min(reconnect_backoff * 2, MAX_RECONNECT_BACKOFF)
-            return false
+        if not should_retry then
+            -- Append newline once for entire send
+            local full_data = data .. "\n"
+            local total_bytes = #full_data
+            local sent_bytes = 0
+            local send_failed = false
+
+            -- Send loop handling partial sends
+            while sent_bytes < total_bytes do
+                local ok, err = pcall(function()
+                    local remaining = full_data:sub(sent_bytes + 1)
+                    local bytes, send_err = socket.send(sock, remaining)
+
+                    if not bytes then
+                        error(send_err or "send failed")
+                    end
+
+                    if bytes < #remaining then
+                        util.logger(util.loglevel.DEBUG,
+                            string.format("Partial send: %d/%d bytes", bytes, #remaining))
+                    end
+
+                    sent_bytes = sent_bytes + bytes
+                end)
+
+                if not ok then
+                    util.logger(util.loglevel.WARN,
+                        string.format("TCP send failed at %d/%d bytes: %s (retry %d/%d)",
+                            sent_bytes, total_bytes, tostring(err), retry_count + 1, max_retries))
+
+                    -- Close broken connection
+                    pcall(function() socket.close(sock) end)
+                    sock = nil
+                    last_connect_attempt = now_s
+                    reconnect_backoff = math.min(reconnect_backoff * 2, MAX_RECONNECT_BACKOFF)
+
+                    send_failed = true
+                    break
+                end
+            end
+
+            -- If send succeeded completely, we're done
+            if not send_failed and sent_bytes == total_bytes then
+                return true
+            end
+
+            -- Send failed, retry
+            retry_count = retry_count + 1
+            if retry_count < max_retries then
+                util.nsleep(0, 100000000)  -- 100ms sleep before retry
+            end
         end
     end
 
-    local ok, err = pcall(function()
-        local sent, send_err = socket.send(sock, data .. "\n")
-        if not sent then
-            error(send_err or "send failed")
-        end
-    end)
-
-    if not ok then
-        util.logger(util.loglevel.WARN, "TCP send failed: " .. tostring(err) .. " - will reconnect")
-        pcall(function() socket.close(sock) end)
-        sock = nil
-        sock_connected = false
-        last_connect_attempt = now_s
-        reconnect_backoff = math.min(reconnect_backoff * 2, MAX_RECONNECT_BACKOFF)
-        return false
-    end
-
-    return true
+    -- All retries exhausted
+    util.logger(util.loglevel.ERROR,
+        string.format("Failed to send TCP data after %d retries - data lost", max_retries))
+    return false
 end
 
 function M.configure(arg_settings, arg_metrics_queue)
