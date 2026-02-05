@@ -116,6 +116,13 @@ local function load_reflector_list(file_path, ip_version)
     return reflectors
 end
 
+local function validate_ifname(name)
+    if not name or name == "" then return false end
+    if #name >= 16 then return false end         -- IFNAMSIZ limit
+    if name:match("[/%s]") then return false end -- No slashes or whitespace
+    return true
+end
+
 -- a stub for plugins to retrieve their UCI settings
 --  parameters
 --      plugin      - the name of the plugin. Do change '-' to '_' to avoid breaking UCI
@@ -228,9 +235,9 @@ function M.initialise(requires, version, arg_reflector_data)
         download_interface = download_interface or (os.getenv("SQMA_DOWNLOAD_INTERFACE"))
         M.dl_if = download_interface
 
-        if upload_interface == nil or download_interface == nil then
+        if not validate_ifname(upload_interface) or not validate_ifname(download_interface) then
             util.logger(util.loglevel.FATAL,
-                "No interfaces found, please check the settings for 'upload_interface' and 'download_interface'")
+                "No or invalid interfaces, please check the settings for 'upload_interface' and 'download_interface'")
             os.exit(1, true)
         end
     end
@@ -399,7 +406,7 @@ function M.initialise(requires, version, arg_reflector_data)
         M.output_statistics = not suppress_statistics
     end
 
-        -- Observability settings for remote metrics export
+    -- Observability settings for remote metrics export
     do
         local observability_enabled
         if uci_settings then
